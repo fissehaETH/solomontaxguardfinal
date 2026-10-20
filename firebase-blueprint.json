@@ -1,0 +1,362 @@
+{
+  "entities": {
+    "SaleTransaction": {
+      "title": "SaleTransaction",
+      "description": "Total daily sales transaction recorded in the ledger.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "receiptNumber": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string", "maxLength": 30 },
+        "time": { "type": "string", "maxLength": 20 },
+        "customerName": { "type": "string", "maxLength": 200 },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "taxRate": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "cashAmount": { "type": "number" },
+        "bankTransferAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "bank_transfer"] },
+        "bankAccountId": { "type": "string", "maxLength": 128 },
+        "isReconciledWithBank": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "receiptNumber",
+        "date",
+        "time",
+        "items",
+        "subtotal",
+        "taxRate",
+        "taxAmount",
+        "totalAmount",
+        "paymentMethod",
+        "isReconciledWithBank",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PurchaseItem": {
+      "title": "PurchaseItem",
+      "description": "Purchased building materials or operational expense record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "invoiceNumber": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string", "maxLength": 30 },
+        "vendorName": { "type": "string", "maxLength": 200 },
+        "vendorTin": { "type": "string", "maxLength": 100 },
+        "itemName": { "type": "string", "maxLength": 300 },
+        "category": { "type": "string", "maxLength": 60 },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "taxRate": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "deductibility": { "type": "string", "enum": ["fully_deductible", "partially_deductible", "non_deductible"] },
+        "deductiblePercentage": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "bank_transfer"] },
+        "bankAccountId": { "type": "string", "maxLength": 128 },
+        "isReconciledWithBank": { "type": "boolean" },
+        "receiptImage": { "type": "string", "maxLength": 800000 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "invoiceNumber",
+        "date",
+        "vendorName",
+        "itemName",
+        "category",
+        "quantity",
+        "unitCost",
+        "subtotal",
+        "taxRate",
+        "taxAmount",
+        "totalAmount",
+        "deductibility",
+        "deductiblePercentage",
+        "paymentMethod",
+        "isReconciledWithBank",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BankAccount": {
+      "title": "BankAccount",
+      "description": "Shop bank account monitored for balances and reconciliation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 150 },
+        "bankName": { "type": "string", "maxLength": 150 },
+        "accountNumberMasked": { "type": "string", "maxLength": 50 },
+        "type": { "type": "string", "enum": ["checking", "savings", "tax_reserve"] },
+        "currentBalance": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 20 },
+        "color": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "bankName",
+        "accountNumberMasked",
+        "type",
+        "currentBalance",
+        "currency",
+        "color",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BankTransaction": {
+      "title": "BankTransaction",
+      "description": "Credit or debit transaction entry on a bank account.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bankAccountId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 30 },
+        "description": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "enum": ["credit", "debit"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string", "maxLength": 60 },
+        "referenceId": { "type": "string", "maxLength": 128 },
+        "isReconciled": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "bankAccountId",
+        "date",
+        "description",
+        "type",
+        "amount",
+        "category",
+        "isReconciled",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DailyRegisterClose": {
+      "title": "DailyRegisterClose",
+      "description": "Daily Z-Report cash register reconciliation close.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 30 },
+        "openingFloat": { "type": "number" },
+        "cashSales": { "type": "number" },
+        "cardSales": { "type": "number" },
+        "bankTransferSales": { "type": "number" },
+        "totalGrossSales": { "type": "number" },
+        "totalTaxCollected": { "type": "number" },
+        "cashPaidOutForPurchases": { "type": "number" },
+        "actualCashCounted": { "type": "number" },
+        "cashVariance": { "type": "number" },
+        "bankDepositAmount": { "type": "number" },
+        "closedBy": { "type": "string", "maxLength": 150 },
+        "status": { "type": "string", "enum": ["balanced", "variance_flagged"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "date",
+        "openingFloat",
+        "cashSales",
+        "cardSales",
+        "bankTransferSales",
+        "totalGrossSales",
+        "totalTaxCollected",
+        "cashPaidOutForPurchases",
+        "actualCashCounted",
+        "cashVariance",
+        "bankDepositAmount",
+        "closedBy",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ReconcilingItem": {
+      "title": "ReconcilingItem",
+      "description": "Reconciling item for Bank Reconciliation Statement (BRS).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bankAccountId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 30 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "deposit_in_transit",
+            "outstanding_cheque",
+            "bank_error_adjustment",
+            "unrecorded_bank_credit",
+            "bank_service_charge",
+            "nsf_dishonored_cheque"
+          ]
+        },
+        "referenceNumber": { "type": "string", "maxLength": 100 },
+        "partyOrDescription": { "type": "string", "maxLength": 300 },
+        "amount": { "type": "number" },
+        "isCleared": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "bankAccountId",
+        "date",
+        "type",
+        "referenceNumber",
+        "partyOrDescription",
+        "amount",
+        "isCleared",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BankReconciliationStatement": {
+      "title": "BankReconciliationStatement",
+      "description": "Certified Bank Reconciliation Statement (BRS) archive record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "statementNumber": { "type": "string", "maxLength": 100 },
+        "bankAccountId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "statementDate": { "type": "string", "maxLength": 30 },
+        "periodStart": { "type": "string", "maxLength": 30 },
+        "periodEnd": { "type": "string", "maxLength": 30 },
+        "balancePerBankStatement": { "type": "number" },
+        "unadjustedBookBalance": { "type": "number" },
+        "depositsInTransitTotal": { "type": "number" },
+        "outstandingChequesTotal": { "type": "number" },
+        "unrecordedCreditsTotal": { "type": "number" },
+        "bankChargesTotal": { "type": "number" },
+        "adjustedBankBalance": { "type": "number" },
+        "adjustedBookBalance": { "type": "number" },
+        "variance": { "type": "number" },
+        "status": { "type": "string", "enum": ["reconciled", "discrepancy"] },
+        "preparedBy": { "type": "string", "maxLength": 150 },
+        "certifiedAt": { "type": "string", "maxLength": 60 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "statementNumber",
+        "bankAccountId",
+        "statementDate",
+        "periodStart",
+        "periodEnd",
+        "balancePerBankStatement",
+        "unadjustedBookBalance",
+        "depositsInTransitTotal",
+        "outstandingChequesTotal",
+        "unrecordedCreditsTotal",
+        "bankChargesTotal",
+        "adjustedBankBalance",
+        "adjustedBookBalance",
+        "variance",
+        "status",
+        "preparedBy",
+        "certifiedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TaxSettings": {
+      "title": "TaxSettings",
+      "description": "Shop tax and currency settings.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "businessName": { "type": "string", "maxLength": 200 },
+        "taxIdNumber": { "type": "string", "maxLength": 100 },
+        "currency": { "type": "string", "maxLength": 20 },
+        "currencySymbol": { "type": "string", "maxLength": 20 },
+        "defaultSalesTaxRate": { "type": "number" },
+        "corporateTaxRate": { "type": "number" },
+        "fiscalYearStartMonth": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "businessName",
+        "taxIdNumber",
+        "currency",
+        "currencySymbol",
+        "defaultSalesTaxRate",
+        "corporateTaxRate",
+        "fiscalYearStartMonth",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/sales/{saleId}": {
+      "schema": "SaleTransaction",
+      "description": "Total daily sales records owned by the user."
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "PurchaseItem",
+      "description": "Purchase and expense records owned by the user."
+    },
+    "/bankAccounts/{accountId}": {
+      "schema": "BankAccount",
+      "description": "Bank accounts owned by the user."
+    },
+    "/bankTransactions/{txId}": {
+      "schema": "BankTransaction",
+      "description": "Bank statement transactions owned by the user."
+    },
+    "/dailyCloses/{closeId}": {
+      "schema": "DailyRegisterClose",
+      "description": "Daily Z-report close records owned by the user."
+    },
+    "/reconcilingItems/{itemId}": {
+      "schema": "ReconcilingItem",
+      "description": "Bank reconciliation statement items owned by the user."
+    },
+    "/brsStatements/{statementId}": {
+      "schema": "BankReconciliationStatement",
+      "description": "Certified bank reconciliation statements owned by the user."
+    },
+    "/settings/{userId}": {
+      "schema": "TaxSettings",
+      "description": "Tax compliance settings document keyed by userId."
+    }
+  }
+}

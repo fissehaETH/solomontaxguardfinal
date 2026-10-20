@@ -1,0 +1,476 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Global Helpers
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource != null ? resource.data : null;
+    }
+    function isDocOwner() {
+      return resource == null || !('ownerId' in resource.data) || resource.data.ownerId == request.auth.uid;
+    }
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 1. SaleTransaction Validation Blueprint
+    function isValidSaleTransaction(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'receiptNumber', 'date', 'time', 'items',
+        'subtotal', 'taxRate', 'taxAmount', 'totalAmount',
+        'paymentMethod', 'isReconciledWithBank', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'receiptNumber', 'date', 'time', 'customerName', 'items',
+        'subtotal', 'taxRate', 'taxAmount', 'totalAmount', 'cashAmount', 'bankTransferAmount',
+        'paymentMethod', 'bankAccountId', 'isReconciledWithBank', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.receiptNumber is string && data.receiptNumber.size() >= 1 && data.receiptNumber.size() <= 100 &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.time is string && data.time.size() >= 1 && data.time.size() <= 20 &&
+      (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 200)) &&
+      data.items is list && data.items.size() <= 10 &&
+      (data.items.size() == 0 || data.items[0] is map) &&
+      data.subtotal is number && data.subtotal >= 0 &&
+      data.taxRate is number && data.taxRate >= 0 && data.taxRate <= 1 &&
+      data.taxAmount is number && data.taxAmount >= 0 &&
+      data.totalAmount is number && data.totalAmount >= 0 &&
+      (!('cashAmount' in data) || (data.cashAmount is number && data.cashAmount >= 0)) &&
+      (!('bankTransferAmount' in data) || (data.bankTransferAmount is number && data.bankTransferAmount >= 0)) &&
+      data.paymentMethod is string && data.paymentMethod in ['cash', 'bank_transfer'] &&
+      (!('bankAccountId' in data) || (data.bankAccountId is string && data.bankAccountId.size() <= 128)) &&
+      data.isReconciledWithBank is bool &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 2. PurchaseItem Validation Blueprint
+    function isValidPurchaseItem(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'invoiceNumber', 'date', 'vendorName', 'itemName',
+        'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
+        'totalAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
+        'isReconciledWithBank', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
+        'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
+        'totalAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
+        'bankAccountId', 'isReconciledWithBank', 'receiptImage', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 100 &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.vendorName is string && data.vendorName.size() >= 1 && data.vendorName.size() <= 200 &&
+      (!('vendorTin' in data) || (data.vendorTin is string && data.vendorTin.size() <= 100)) &&
+      data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 300 &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+      data.quantity is number && data.quantity >= 0 &&
+      data.unitCost is number && data.unitCost >= 0 &&
+      data.subtotal is number && data.subtotal >= 0 &&
+      data.taxRate is number && data.taxRate >= 0 && data.taxRate <= 1 &&
+      data.taxAmount is number && data.taxAmount >= 0 &&
+      data.totalAmount is number && data.totalAmount >= 0 &&
+      data.deductibility is string && data.deductibility in ['fully_deductible', 'partially_deductible', 'non_deductible'] &&
+      data.deductiblePercentage is number && data.deductiblePercentage >= 0 && data.deductiblePercentage <= 100 &&
+      data.paymentMethod is string && data.paymentMethod in ['cash', 'bank_transfer'] &&
+      (!('bankAccountId' in data) || (data.bankAccountId is string && data.bankAccountId.size() <= 128)) &&
+      data.isReconciledWithBank is bool &&
+      (!('receiptImage' in data) || (data.receiptImage is string && data.receiptImage.size() <= 800000)) &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 3. BankAccount Validation Blueprint
+    function isValidBankAccount(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'name', 'bankName', 'accountNumberMasked',
+        'type', 'currentBalance', 'currency', 'color', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'name', 'bankName', 'accountNumberMasked',
+        'type', 'currentBalance', 'currency', 'color', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
+      data.bankName is string && data.bankName.size() >= 1 && data.bankName.size() <= 150 &&
+      data.accountNumberMasked is string && data.accountNumberMasked.size() >= 1 && data.accountNumberMasked.size() <= 50 &&
+      data.type is string && data.type in ['checking', 'savings', 'tax_reserve'] &&
+      data.currentBalance is number &&
+      data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 20 &&
+      data.color is string && data.color.size() >= 1 && data.color.size() <= 40 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 4. BankTransaction Validation Blueprint
+    function isValidBankTransaction(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'bankAccountId', 'date', 'description',
+        'type', 'amount', 'category', 'isReconciled', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'bankAccountId', 'date', 'description',
+        'type', 'amount', 'category', 'referenceId', 'isReconciled', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      isValidId(data.bankAccountId) &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.description is string && data.description.size() >= 1 && data.description.size() <= 500 &&
+      data.type is string && data.type in ['credit', 'debit'] &&
+      data.amount is number && data.amount >= 0 &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+      (!('referenceId' in data) || (data.referenceId is string && data.referenceId.size() <= 128)) &&
+      data.isReconciled is bool &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 5. DailyRegisterClose Validation Blueprint
+    function isValidDailyRegisterClose(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'date', 'openingFloat', 'cashSales', 'cardSales',
+        'bankTransferSales', 'totalGrossSales', 'totalTaxCollected',
+        'cashPaidOutForPurchases', 'actualCashCounted', 'cashVariance',
+        'bankDepositAmount', 'closedBy', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'date', 'openingFloat', 'cashSales', 'cardSales',
+        'bankTransferSales', 'totalGrossSales', 'totalTaxCollected',
+        'cashPaidOutForPurchases', 'actualCashCounted', 'cashVariance',
+        'bankDepositAmount', 'closedBy', 'status', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.openingFloat is number &&
+      data.cashSales is number &&
+      data.cardSales is number &&
+      data.bankTransferSales is number &&
+      data.totalGrossSales is number &&
+      data.totalTaxCollected is number &&
+      data.cashPaidOutForPurchases is number &&
+      data.actualCashCounted is number &&
+      data.cashVariance is number &&
+      data.bankDepositAmount is number &&
+      data.closedBy is string && data.closedBy.size() >= 1 && data.closedBy.size() <= 150 &&
+      data.status is string && data.status in ['balanced', 'variance_flagged'] &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 6. ReconcilingItem Validation Blueprint
+    function isValidReconcilingItem(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'bankAccountId', 'date', 'type',
+        'referenceNumber', 'partyOrDescription', 'amount', 'isCleared', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'bankAccountId', 'date', 'type',
+        'referenceNumber', 'partyOrDescription', 'amount', 'isCleared', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      isValidId(data.bankAccountId) &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.type is string && data.type in [
+        'deposit_in_transit', 'outstanding_cheque', 'bank_error_adjustment',
+        'unrecorded_bank_credit', 'bank_service_charge', 'nsf_dishonored_cheque'
+      ] &&
+      data.referenceNumber is string && data.referenceNumber.size() >= 1 && data.referenceNumber.size() <= 100 &&
+      data.partyOrDescription is string && data.partyOrDescription.size() >= 1 && data.partyOrDescription.size() <= 300 &&
+      data.amount is number && data.amount >= 0 &&
+      data.isCleared is bool &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 7. BankReconciliationStatement Validation Blueprint
+    function isValidBRSStatement(data) {
+      return data.keys().hasAll([
+        'id', 'ownerId', 'statementNumber', 'bankAccountId', 'statementDate',
+        'periodStart', 'periodEnd', 'balancePerBankStatement', 'unadjustedBookBalance',
+        'depositsInTransitTotal', 'outstandingChequesTotal', 'unrecordedCreditsTotal',
+        'bankChargesTotal', 'adjustedBankBalance', 'adjustedBookBalance', 'variance',
+        'status', 'preparedBy', 'certifiedAt', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerId', 'statementNumber', 'bankAccountId', 'statementDate',
+        'periodStart', 'periodEnd', 'balancePerBankStatement', 'unadjustedBookBalance',
+        'depositsInTransitTotal', 'outstandingChequesTotal', 'unrecordedCreditsTotal',
+        'bankChargesTotal', 'adjustedBankBalance', 'adjustedBookBalance', 'variance',
+        'status', 'preparedBy', 'certifiedAt', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.statementNumber is string && data.statementNumber.size() >= 1 && data.statementNumber.size() <= 100 &&
+      isValidId(data.bankAccountId) &&
+      data.statementDate is string && data.statementDate.size() >= 1 && data.statementDate.size() <= 30 &&
+      data.periodStart is string && data.periodStart.size() >= 1 && data.periodStart.size() <= 30 &&
+      data.periodEnd is string && data.periodEnd.size() >= 1 && data.periodEnd.size() <= 30 &&
+      data.balancePerBankStatement is number &&
+      data.unadjustedBookBalance is number &&
+      data.depositsInTransitTotal is number &&
+      data.outstandingChequesTotal is number &&
+      data.unrecordedCreditsTotal is number &&
+      data.bankChargesTotal is number &&
+      data.adjustedBankBalance is number &&
+      data.adjustedBookBalance is number &&
+      data.variance is number &&
+      data.status is string && data.status in ['reconciled', 'discrepancy'] &&
+      data.preparedBy is string && data.preparedBy.size() >= 1 && data.preparedBy.size() <= 150 &&
+      data.certifiedAt is string && data.certifiedAt.size() >= 1 && data.certifiedAt.size() <= 60 &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 8. TaxSettings Validation Blueprint
+    function isValidTaxSettings(data) {
+      return data.keys().hasAll([
+        'ownerId', 'businessName', 'taxIdNumber', 'currency',
+        'currencySymbol', 'defaultSalesTaxRate', 'corporateTaxRate',
+        'fiscalYearStartMonth', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId', 'businessName', 'taxIdNumber', 'currency',
+        'currencySymbol', 'defaultSalesTaxRate', 'corporateTaxRate',
+        'fiscalYearStartMonth', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.ownerId) &&
+      data.ownerId == request.auth.uid &&
+      data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 200 &&
+      data.taxIdNumber is string && data.taxIdNumber.size() <= 100 &&
+      data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 20 &&
+      data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 20 &&
+      data.defaultSalesTaxRate is number && data.defaultSalesTaxRate >= 0 && data.defaultSalesTaxRate <= 1 &&
+      data.corporateTaxRate is number && data.corporateTaxRate >= 0 && data.corporateTaxRate <= 1 &&
+      data.fiscalYearStartMonth is number && data.fiscalYearStartMonth >= 1 && data.fiscalYearStartMonth <= 12 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Collection 1: /sales/{saleId}
+    match /sales/{saleId} {
+      allow get: if isSignedIn() && isValidId(saleId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(saleId) && isValidSaleTransaction(incoming()) &&
+        incoming().id == saleId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidSaleTransaction(incoming()) && isValidId(saleId) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'receiptNumber', 'date', 'time', 'customerName', 'items',
+          'subtotal', 'taxRate', 'taxAmount', 'totalAmount',
+          'cashAmount', 'bankTransferAmount', 'paymentMethod',
+          'bankAccountId', 'isReconciledWithBank', 'notes', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(saleId) && isDocOwner();
+    }
+
+    // Collection 2: /purchases/{purchaseId}
+    match /purchases/{purchaseId} {
+      allow get: if isSignedIn() && isValidId(purchaseId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(purchaseId) && isValidPurchaseItem(incoming()) &&
+        incoming().id == purchaseId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidPurchaseItem(incoming()) && isValidId(purchaseId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
+          'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
+          'totalAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
+          'bankAccountId', 'isReconciledWithBank', 'receiptImage', 'notes', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(purchaseId) && isDocOwner();
+    }
+
+    // Collection 3: /bankAccounts/{accountId}
+    match /bankAccounts/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(accountId) && isValidBankAccount(incoming()) &&
+        incoming().id == accountId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidBankAccount(incoming()) && isValidId(accountId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'bankName', 'accountNumberMasked', 'type',
+          'currentBalance', 'currency', 'color', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(accountId) && isDocOwner();
+    }
+
+    // Collection 4: /bankTransactions/{txId}
+    match /bankTransactions/{txId} {
+      allow get: if isSignedIn() && isValidId(txId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(txId) && isValidBankTransaction(incoming()) &&
+        incoming().id == txId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isValidBankTransaction(incoming()) && isValidId(txId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'bankAccountId', 'date', 'description', 'type', 'amount',
+          'category', 'referenceId', 'isReconciled', 'notes', 'updatedAt'
+        ]) &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(txId) && isDocOwner();
+    }
+
+    // Collection 5: /dailyCloses/{closeId}
+    match /dailyCloses/{closeId} {
+      allow get: if isSignedIn() && isValidId(closeId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(closeId) && isValidDailyRegisterClose(incoming()) &&
+        incoming().id == closeId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidDailyRegisterClose(incoming()) && isValidId(closeId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'date', 'openingFloat', 'cashSales', 'cardSales', 'bankTransferSales',
+          'totalGrossSales', 'totalTaxCollected', 'cashPaidOutForPurchases',
+          'actualCashCounted', 'cashVariance', 'bankDepositAmount',
+          'closedBy', 'status', 'notes', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(closeId) && isDocOwner();
+    }
+
+    // Collection 6: /reconcilingItems/{itemId}
+    match /reconcilingItems/{itemId} {
+      allow get: if isSignedIn() && isValidId(itemId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(itemId) && isValidReconcilingItem(incoming()) &&
+        incoming().id == itemId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isValidReconcilingItem(incoming()) && isValidId(itemId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'bankAccountId', 'date', 'type', 'referenceNumber',
+          'partyOrDescription', 'amount', 'isCleared', 'notes', 'updatedAt'
+        ]) &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(itemId) && isDocOwner();
+    }
+
+    // Collection 7: /brsStatements/{statementId}
+    match /brsStatements/{statementId} {
+      allow get: if isSignedIn() && isValidId(statementId) && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(statementId) && isValidBRSStatement(incoming()) &&
+        incoming().id == statementId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isValidBRSStatement(incoming()) && isValidId(statementId) &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'statementNumber', 'bankAccountId', 'statementDate', 'periodStart', 'periodEnd',
+          'balancePerBankStatement', 'unadjustedBookBalance', 'depositsInTransitTotal',
+          'outstandingChequesTotal', 'unrecordedCreditsTotal', 'bankChargesTotal',
+          'adjustedBankBalance', 'adjustedBookBalance', 'variance',
+          'status', 'preparedBy', 'certifiedAt', 'notes', 'updatedAt'
+        ]) &&
+        exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
+        get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(statementId) && isDocOwner();
+    }
+
+    // Collection 8: /settings/{userId}
+    match /settings/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
+        isValidTaxSettings(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidTaxSettings(incoming()) && isValidId(userId) &&
+        userId == request.auth.uid &&
+        existing() != null &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'businessName', 'taxIdNumber', 'currency', 'currencySymbol',
+          'defaultSalesTaxRate', 'corporateTaxRate', 'fiscalYearStartMonth', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+    }
+  }
+}

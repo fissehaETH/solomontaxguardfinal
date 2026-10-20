@@ -1,0 +1,266 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    background-color: #F8F7F4;
+    color: #1C1917;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  html.dark body {
+    background-color: #0C0A09;
+    color: #F5F5F4;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  .font-mono, .font-tabular {
+    font-family: 'IBM Plex Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* High-contrast Dark Mode overrides for Warm Architectural Ledger (Disabled when printing) */
+@media not print {
+  html.dark {
+    color-scheme: dark;
+  }
+
+  /* Primary Canvas & Card Surfaces */
+  html.dark .bg-\[\#F8F7F4\] {
+    background-color: #0C0A09 !important;
+  }
+  html.dark .bg-white {
+    background-color: #171412 !important;
+  }
+  html.dark .bg-white\/95 {
+    background-color: rgba(23, 20, 18, 0.95) !important;
+  }
+  html.dark .bg-stone-50,
+  html.dark .bg-stone-50\/70,
+  html.dark .bg-stone-50\/60,
+  html.dark .bg-stone-50\/50 {
+    background-color: #1C1917 !important;
+  }
+  html.dark .bg-stone-100,
+  html.dark .bg-stone-100\/70 {
+    background-color: #262320 !important;
+  }
+  html.dark .bg-stone-200,
+  html.dark .bg-stone-200\/70 {
+    background-color: #332E2A !important;
+  }
+
+  /* Dark Action Buttons & Surfaces */
+  html.dark button.bg-stone-900,
+  html.dark div.bg-stone-900 {
+    background-color: #292524 !important;
+    border: 1px solid #44403C;
+  }
+  html.dark button.bg-stone-900:hover,
+  html.dark .hover\:bg-stone-800:hover {
+    background-color: #38332E !important;
+  }
+
+  /* Interactive Hover States */
+  html.dark .hover\:bg-stone-50:hover,
+  html.dark .hover\:bg-stone-50\/60:hover,
+  html.dark .hover\:bg-stone-50\/70:hover {
+    background-color: #221F1D !important;
+  }
+  html.dark .hover\:bg-stone-100:hover {
+    background-color: #292524 !important;
+  }
+  html.dark .hover\:bg-stone-200:hover,
+  html.dark .hover\:bg-stone-200\/70:hover {
+    background-color: #38332E !important;
+  }
+
+  /* Typography Hierarchy */
+  html.dark .text-stone-900 {
+    color: #F5F5F4 !important;
+  }
+  html.dark .text-stone-800 {
+    color: #E7E5E4 !important;
+  }
+  html.dark .text-stone-700 {
+    color: #D6D3D1 !important;
+  }
+  html.dark .text-stone-600 {
+    color: #A8A29E !important;
+  }
+  html.dark .text-stone-500 {
+    color: #9CA3AF !important;
+  }
+  html.dark .text-stone-400 {
+    color: #78716C !important;
+  }
+  html.dark .hover\:text-stone-900:hover {
+    color: #FFFFFF !important;
+  }
+
+  /* Hairline Borders & Dividers */
+  html.dark .border-stone-100 {
+    border-color: #221F1D !important;
+  }
+  html.dark .border-stone-200 {
+    border-color: #292524 !important;
+  }
+  html.dark .border-stone-300 {
+    border-color: #44403C !important;
+  }
+  html.dark .divide-stone-100 > :not([hidden]) ~ :not([hidden]) {
+    border-color: #221F1D !important;
+  }
+  html.dark .divide-stone-200 > :not([hidden]) ~ :not([hidden]) {
+    border-color: #292524 !important;
+  }
+
+  /* Semantic Status Surfaces: Emerald */
+  html.dark .bg-emerald-50,
+  html.dark .bg-emerald-50\/40,
+  html.dark .bg-emerald-50\/50,
+  html.dark .bg-emerald-50\/60,
+  html.dark .bg-emerald-100 {
+    background-color: rgba(6, 78, 59, 0.28) !important;
+  }
+  html.dark .border-emerald-200,
+  html.dark .border-emerald-300 {
+    border-color: rgba(16, 185, 129, 0.32) !important;
+  }
+  html.dark .text-emerald-950,
+  html.dark .text-emerald-900,
+  html.dark .text-emerald-800,
+  html.dark .text-emerald-700 {
+    color: #6EE7B7 !important;
+  }
+
+  /* Semantic Status Surfaces: Orange (excluding solid bg-orange-700 CTAs) */
+  html.dark .bg-orange-50,
+  html.dark .bg-orange-50\/40,
+  html.dark .bg-orange-50\/50,
+  html.dark .bg-orange-50\/60,
+  html.dark .bg-orange-100 {
+    background-color: rgba(124, 45, 18, 0.28) !important;
+  }
+  html.dark .border-orange-200,
+  html.dark .border-orange-300 {
+    border-color: rgba(249, 115, 22, 0.35) !important;
+  }
+  html.dark .text-orange-950,
+  html.dark .text-orange-900,
+  html.dark .text-orange-800,
+  html.dark .text-orange-700 {
+    color: #FB923C !important;
+  }
+  html.dark .bg-orange-700 .text-orange-100 {
+    color: #FFEDD5 !important;
+  }
+
+  /* Semantic Status Surfaces: Amber */
+  html.dark .bg-amber-50,
+  html.dark .bg-amber-50\/40,
+  html.dark .bg-amber-50\/50,
+  html.dark .bg-amber-50\/60,
+  html.dark .bg-amber-100 {
+    background-color: rgba(120, 53, 15, 0.28) !important;
+  }
+  html.dark .border-amber-200,
+  html.dark .border-amber-300 {
+    border-color: rgba(245, 158, 11, 0.35) !important;
+  }
+  html.dark .text-amber-950,
+  html.dark .text-amber-900,
+  html.dark .text-amber-800,
+  html.dark .text-amber-700 {
+    color: #FCD34D !important;
+  }
+
+  /* Semantic Status Surfaces: Red (excluding solid bg-red-700 CTAs) */
+  html.dark .bg-red-50,
+  html.dark .bg-red-50\/40,
+  html.dark .bg-red-50\/50,
+  html.dark .bg-red-50\/60,
+  html.dark .bg-red-100 {
+    background-color: rgba(127, 29, 29, 0.28) !important;
+  }
+  html.dark .hover\:bg-red-50:hover {
+    background-color: rgba(127, 29, 29, 0.38) !important;
+  }
+  html.dark .border-red-200,
+  html.dark .border-red-300 {
+    border-color: rgba(239, 68, 68, 0.35) !important;
+  }
+  html.dark .text-red-950,
+  html.dark .text-red-900,
+  html.dark .text-red-800,
+  html.dark .text-red-700 {
+    color: #FCA5A5 !important;
+  }
+
+  /* Semantic Status Surfaces: Blue */
+  html.dark .bg-blue-50,
+  html.dark .bg-blue-50\/40,
+  html.dark .bg-blue-50\/50,
+  html.dark .bg-blue-50\/60,
+  html.dark .bg-blue-100 {
+    background-color: rgba(30, 58, 138, 0.28) !important;
+  }
+  html.dark .border-blue-200,
+  html.dark .border-blue-300 {
+    border-color: rgba(59, 130, 246, 0.35) !important;
+  }
+  html.dark .text-blue-950,
+  html.dark .text-blue-900,
+  html.dark .text-blue-800,
+  html.dark .text-blue-700 {
+    color: #93C5FD !important;
+  }
+
+  /* Form Inputs & Placeholders */
+  html.dark input::placeholder,
+  html.dark textarea::placeholder {
+    color: #78716C !important;
+  }
+}
+
+/* Custom minimal scrollbar for warm architectural ledger */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 113, 108, 0.25);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 113, 108, 0.45);
+}
+
+/* Print styling for Tax Audit Dossier & BRS */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}
+
+

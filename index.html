@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      // Gracefully silence expected HMR WebSocket disconnection notifications in cloud iframe environment
+      (function() {
+        var originalConsoleError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var isBenign = args.some(function(arg) {
+            if (!arg) return false;
+            var text = typeof arg === 'string' ? arg : (arg.message || String(arg));
+            return (
+              text.indexOf('WebSocket closed without opened') !== -1 ||
+              (text.indexOf('[vite]') !== -1 && text.indexOf('WebSocket') !== -1)
+            );
+          });
+          if (isBenign) {
+            return;
+          }
+          return originalConsoleError.apply(console, args);
+        };
+
+        window.addEventListener('error', function (e) {
+          if (
+            e &&
+            ((e.message && e.message.indexOf('WebSocket closed without opened') !== -1) ||
+             (e.error && e.error.message && e.error.message.indexOf('WebSocket closed without opened') !== -1))
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (e) {
+          if (
+            e &&
+            ((e.reason && e.reason.message && e.reason.message.indexOf('WebSocket closed without opened') !== -1) ||
+             (typeof e.reason === 'string' && e.reason.indexOf('WebSocket closed without opened') !== -1))
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Solomon Building Materials - Sales, Purchases & Bank Tracker</title>
+    <meta name="description" content="Audit-proof Android bookkeeping app to track daily sales, purchase items, and reconcile bank balances for error-free tax audits." />
+    <meta property="og:title" content="Solomon Building Materials - Sales, Purchases & Bank Tracker" />
+    <meta property="og:description" content="Audit-proof Android bookkeeping app to track daily sales, purchase items, and reconcile bank balances for error-free tax audits." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#F8F7F4" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="TaxGuard" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=IBM+Plex+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-[#F8F7F4] text-stone-900 antialiased selection:bg-orange-700 selection:text-white overscroll-none">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

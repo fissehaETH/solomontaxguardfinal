@@ -1,0 +1,6 @@
+{
+  "name": "TaxGuard - Sales, Purchases & Bank Tracker",
+  "description": "Audit-proof Android bookkeeping app to track daily sales, purchase items, and reconcile bank balances for error-free tax audits.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
