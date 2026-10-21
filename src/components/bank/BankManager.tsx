@@ -11,6 +11,7 @@ import {
 import {
   formatCurrency,
   formatDate,
+  formatBankCategory,
   getSaleBankTransferAmount,
 } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
@@ -86,7 +87,9 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const today = new Date().toISOString().split('T')[0];
   const [subTab, setSubTab] = useState<'brs' | 'feed'>('brs');
   const [selectedAccountId, setSelectedAccountId] = useState<string>('all');
-  const [filterType, setFilterType] = useState<'all' | 'unreconciled' | 'reconciled'>('all');
+  const [filterType, setFilterType] = useState<
+    'all' | 'deposits' | 'payments' | 'unreconciled' | 'reconciled'
+  >('all');
 
   // Modals
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false);
@@ -111,7 +114,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState(0);
   const [txType, setTxType] = useState<'credit' | 'debit'>('credit');
-  const [txCategory, setTxCategory] = useState<BankTransaction['category']>('sale_deposit');
+  const [txCategory, setTxCategory] = useState<BankTransaction['category']>('sales_cash_deposit');
   const [notes, setNotes] = useState('');
 
   // Transfer Form
@@ -159,7 +162,31 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setDescription('');
     setAmount(0);
     setTxType('credit');
-    setTxCategory('sale_deposit');
+    setTxCategory('sales_cash_deposit');
+    setNotes('');
+    setIsAddTxOpen(true);
+  };
+
+  const openNewDepositModal = () => {
+    setEditingTx(null);
+    setTargetBankId(bankAccounts[0]?.id || '');
+    setTxDate(today);
+    setDescription('Sales cash deposited into bank account');
+    setAmount(0);
+    setTxType('credit');
+    setTxCategory('sales_cash_deposit');
+    setNotes('');
+    setIsAddTxOpen(true);
+  };
+
+  const openNewWithdrawModal = () => {
+    setEditingTx(null);
+    setTargetBankId(bankAccounts[0]?.id || '');
+    setTxDate(today);
+    setDescription('Cash withdrawal from bank account');
+    setAmount(0);
+    setTxType('debit');
+    setTxCategory('cash_withdraw');
     setNotes('');
     setIsAddTxOpen(true);
   };
@@ -179,6 +206,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
   // Filtering
   const filteredTransactions = bankTransactions.filter((tx) => {
     if (selectedAccountId !== 'all' && tx.bankAccountId !== selectedAccountId) return false;
+    if (filterType === 'deposits' && tx.type !== 'credit') return false;
+    if (filterType === 'payments' && tx.type !== 'debit') return false;
     if (filterType === 'unreconciled' && tx.isReconciled) return false;
     if (filterType === 'reconciled' && !tx.isReconciled) return false;
     return true;
@@ -191,6 +220,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
   const totalMonitoredBalance = bankAccounts.reduce((acc, b) => acc + b.currentBalance, 0);
   const unreconciledCount = bankTransactions.filter((t) => !t.isReconciled).length;
+  const depositCount = bankTransactions.filter((t) => t.type === 'credit').length;
+  const paymentCount = bankTransactions.filter((t) => t.type === 'debit').length;
 
   const handleSaveAccount = (e: React.FormEvent) => {
     e.preventDefault();
@@ -351,13 +382,25 @@ export const BankManager: React.FC<BankManagerProps> = ({
           )}
 
           {bankAccounts.length > 0 && (
-            <button
-              onClick={openNewTxModal}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-orange-700 text-white text-xs font-semibold hover:bg-orange-800 transition whitespace-nowrap min-h-[40px]"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              <span>Record Bank Deposit / Payment</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={openNewDepositModal}
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 transition whitespace-nowrap min-h-[40px] shadow-sm cursor-pointer"
+                title="Record money deposited into bank account (Sales Cash Deposit or Transfer)"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span>+ Bank Deposit (ገቢ)</span>
+              </button>
+
+              <button
+                onClick={openNewWithdrawModal}
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-stone-800 text-white text-xs font-semibold hover:bg-stone-900 transition whitespace-nowrap min-h-[40px] shadow-sm cursor-pointer"
+                title="Record money withdrawn from bank account (Cash Withdraw for shop)"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span>− Cash Withdraw (ወጪ)</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -534,22 +577,42 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
           {/* Reconciliation Filters */}
           <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1 p-1 bg-stone-200/70 rounded-lg">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-stone-200/70 rounded-lg">
               <button
                 onClick={() => setFilterType('all')}
-                className={`px-3 py-1.5 rounded-md font-medium transition ${
+                className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
                   filterType === 'all'
-                    ? 'bg-white text-stone-900 shadow-sm'
+                    ? 'bg-white text-stone-900 shadow-sm font-bold'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
                 All Entries ({bankTransactions.length})
               </button>
               <button
+                onClick={() => setFilterType('deposits')}
+                className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                  filterType === 'deposits'
+                    ? 'bg-emerald-700 text-white shadow-sm font-bold'
+                    : 'text-emerald-800 hover:bg-emerald-100/60'
+                }`}
+              >
+                Bank Deposits (+) ({depositCount})
+              </button>
+              <button
+                onClick={() => setFilterType('payments')}
+                className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                  filterType === 'payments'
+                    ? 'bg-stone-900 text-white shadow-sm font-bold'
+                    : 'text-stone-700 hover:bg-stone-300/60'
+                }`}
+              >
+                Withdrawals &amp; Payments (−) ({paymentCount})
+              </button>
+              <button
                 onClick={() => setFilterType('unreconciled')}
-                className={`px-3 py-1.5 rounded-md font-medium transition ${
+                className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
                   filterType === 'unreconciled'
-                    ? 'bg-white text-stone-900 shadow-sm'
+                    ? 'bg-white text-stone-900 shadow-sm font-bold'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
@@ -557,13 +620,13 @@ export const BankManager: React.FC<BankManagerProps> = ({
               </button>
               <button
                 onClick={() => setFilterType('reconciled')}
-                className={`px-3 py-1.5 rounded-md font-medium transition ${
+                className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
                   filterType === 'reconciled'
-                    ? 'bg-white text-stone-900 shadow-sm'
+                    ? 'bg-white text-stone-900 shadow-sm font-bold'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
-                Checked & Matched
+                Checked &amp; Matched
               </button>
             </div>
 
@@ -625,7 +688,9 @@ export const BankManager: React.FC<BankManagerProps> = ({
                           <span aria-hidden="true">·</span>
                           <span>{formatDate(tx.date)}</span>
                           <span aria-hidden="true">·</span>
-                          <span className="capitalize">{tx.category.replace('_', ' ')}</span>
+                          <span className="font-medium text-stone-700 dark:text-stone-300">
+                            {formatBankCategory(tx.category)}
+                          </span>
                         </div>
                         <h4 className="text-sm font-bold text-stone-900 mt-1">{tx.description}</h4>
                       </div>
@@ -819,7 +884,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <div className="grid grid-cols-2 gap-1.5 mt-1">
                 <button
                   type="button"
-                  onClick={() => setTxType('credit')}
+                  onClick={() => {
+                    setTxType('credit');
+                    if (txCategory === 'cash_withdraw') setTxCategory('sales_cash_deposit');
+                  }}
                   className={`py-2 rounded-xl text-xs font-semibold transition ${
                     txType === 'credit'
                       ? 'bg-emerald-700 text-white'
@@ -830,7 +898,12 @@ export const BankManager: React.FC<BankManagerProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTxType('debit')}
+                  onClick={() => {
+                    setTxType('debit');
+                    if (txCategory === 'sale_deposit' || txCategory === 'sales_cash_deposit') {
+                      setTxCategory('cash_withdraw');
+                    }
+                  }}
                   className={`py-2 rounded-xl text-xs font-semibold transition ${
                     txType === 'debit'
                       ? 'bg-stone-900 text-white'
@@ -859,7 +932,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             <input
               type="text"
               required
-              placeholder="e.g. Cash deposited at CBE branch or paid cement supplier"
+              placeholder="e.g. Sales cash deposited at CBE branch or cash withdrawal for shop"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
@@ -882,18 +955,43 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </div>
 
             <div>
-              <span className="text-xs text-stone-600">Reason / Type</span>
+              <span className="text-xs font-semibold text-stone-700">Reason / Category</span>
               <select
                 value={txCategory}
-                onChange={(e) => setTxCategory(e.target.value as BankTransaction['category'])}
-                className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
+                onChange={(e) => {
+                  const val = e.target.value as BankTransaction['category'];
+                  setTxCategory(val);
+                  if (
+                    val === 'cash_withdraw' ||
+                    val === 'vendor_payout' ||
+                    val === 'tax_payment' ||
+                    val === 'bank_fee'
+                  ) {
+                    setTxType('debit');
+                  } else if (
+                    val === 'sales_cash_deposit' ||
+                    val === 'sale_deposit' ||
+                    val === 'card_settlement'
+                  ) {
+                    setTxType('credit');
+                  }
+                }}
+                className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs font-medium text-stone-900 focus:outline-none focus:border-orange-700"
               >
-                <option value="sale_deposit">Sales Money Deposited</option>
-                <option value="vendor_payout">Paid to Supplier</option>
-                <option value="tax_payment">Tax Paid to Government</option>
-                <option value="bank_fee">Bank Service Charge / Fee</option>
-                <option value="transfer">Transfer Between My Accounts</option>
-                <option value="other">Other Bank Entry</option>
+                <optgroup label="Bank Deposits (Money In · ገቢ)">
+                  <option value="sales_cash_deposit">Sales Cash Deposit (የሽያጭ ጥሬ ገንዘብ ባንክ ገቢ)</option>
+                  <option value="sale_deposit">Sales Transfer / Electronic Deposit (የሽያጭ ባንክ ዝውውር)</option>
+                  <option value="card_settlement">Card / POS / Telebirr Settlement</option>
+                  <option value="transfer">Account Transfer In</option>
+                  <option value="other">Other Bank Deposit</option>
+                </optgroup>
+                <optgroup label="Bank Withdrawals & Payments (Money Out · ወጪ)">
+                  <option value="cash_withdraw">Cash Withdraw (ጥሬ ገንዘብ ወጪ)</option>
+                  <option value="vendor_payout">Paid to Supplier / Vendor</option>
+                  <option value="tax_payment">Tax Paid to Government (15% VAT / Profit Tax)</option>
+                  <option value="bank_fee">Bank Service Charge / Fee</option>
+                  <option value="other">Other Withdrawal / Expense</option>
+                </optgroup>
               </select>
             </div>
           </div>

@@ -1497,7 +1497,9 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
                         onChange={(e) => setNewRow({ ...newRow, category: e.target.value as any })}
                         className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-xs"
                       >
-                        <option value="sale_deposit">Sale Deposit</option>
+                        <option value="sale_deposit">Sale Transfer Deposit</option>
+                        <option value="sales_cash_deposit">Sales Cash Deposit</option>
+                        <option value="cash_withdraw">Cash Withdraw</option>
                         <option value="vendor_payout">Vendor Payout</option>
                         <option value="bank_fee">Bank Fee / Charge</option>
                         <option value="tax_payment">Tax Payment</option>
@@ -1562,7 +1564,7 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
+                        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
                           <input
                             type="date"
                             value={editFormData.date || ''}
@@ -1577,25 +1579,46 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
                           />
                           <select
                             value={editFormData.type || 'credit'}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const newType = e.target.value as 'credit' | 'debit';
                               setEditFormData({
                                 ...editFormData,
-                                type: e.target.value as 'credit' | 'debit',
+                                type: newType,
                                 category:
-                                  e.target.value === 'credit' ? 'sale_deposit' : 'vendor_payout',
-                              })
-                            }
+                                  newType === 'credit' ? 'sales_cash_deposit' : 'cash_withdraw',
+                              });
+                            }}
                             className="px-2 py-1 rounded bg-white dark:bg-stone-800 border border-stone-300 text-xs font-semibold"
                           >
                             <option value="credit">Bank Deposit (+)</option>
                             <option value="debit">Payment (-)</option>
+                          </select>
+                          <select
+                            value={editFormData.category || (editFormData.type === 'debit' ? 'cash_withdraw' : 'sales_cash_deposit')}
+                            onChange={(e) =>
+                              setEditFormData({
+                                ...editFormData,
+                                category: e.target.value as any,
+                              })
+                            }
+                            className="px-2 py-1 rounded bg-white dark:bg-stone-800 border border-stone-300 text-xs font-medium"
+                          >
+                            <option value="sales_cash_deposit">Sales Cash Deposit</option>
+                            <option value="sale_deposit">Sale Transfer Deposit</option>
+                            <option value="cash_withdraw">Cash Withdraw</option>
+                            <option value="vendor_payout">Vendor Payout</option>
+                            <option value="tax_payment">Tax Payment</option>
+                            <option value="bank_fee">Bank Fee</option>
+                            <option value="card_settlement">Card Settlement</option>
+                            <option value="transfer">Transfer</option>
+                            <option value="other">Other</option>
                           </select>
                           <input
                             type="number"
                             step="0.01"
                             value={editFormData.amount || ''}
                             onChange={(e) => setEditFormData({ ...editFormData, amount: parseFloat(e.target.value) || 0 })}
-                            className="px-2 py-1 rounded bg-white dark:bg-stone-800 border border-stone-300 text-xs font-tabular"
+                            className="px-2 py-1 rounded bg-white dark:bg-stone-800 border border-stone-300 text-xs font-tabular font-bold"
                           />
                         </div>
                       </div>

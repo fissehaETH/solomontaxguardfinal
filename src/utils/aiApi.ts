@@ -134,6 +134,7 @@ export interface ScannedBankStatementTransaction {
   date: string;
   description: string;
   type: 'credit' | 'debit';
+  amount: number;
   category:
     | 'sale_deposit'
     | 'sales_cash_deposit'

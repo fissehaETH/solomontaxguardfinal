@@ -573,6 +573,13 @@ export function parseBankStatementCSV(
 
     if (type === 'credit') {
       if (
+        lowerDesc.includes('cash deposit') ||
+        lowerDesc.includes('branch cash') ||
+        lowerDesc.includes('cash in') ||
+        lowerDesc.includes('counter deposit')
+      ) {
+        category = 'sales_cash_deposit';
+      } else if (
         lowerDesc.includes('pos') ||
         lowerDesc.includes('card') ||
         lowerDesc.includes('visa') ||
@@ -591,6 +598,13 @@ export function parseBankStatementCSV(
       totalCredits += amount;
     } else {
       if (
+        lowerDesc.includes('withdraw') ||
+        lowerDesc.includes('cash out') ||
+        lowerDesc.includes('atm') ||
+        lowerDesc.includes('branch cash payment')
+      ) {
+        category = 'cash_withdraw';
+      } else if (
         lowerDesc.includes('tax') ||
         lowerDesc.includes('vat') ||
         lowerDesc.includes('mor') ||

@@ -417,14 +417,73 @@ export default function App() {
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
-    if (transferAmount > 0 && newSale.bankAccountId) {
-      const nextAccounts = bankAccounts.map((a) =>
-        a.id === newSale.bankAccountId
-          ? { ...a, currentBalance: a.currentBalance + transferAmount }
-          : a
-      );
-      setBankAccounts(nextAccounts);
-      saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+    // 3. If there is a bank transfer amount, auto-create or update matching bank transaction
+    if (transferAmount > 0) {
+      let currentBankAccounts = [...bankAccounts];
+      let targetBankAccountId = newSale.bankAccountId ? sanitizeId(newSale.bankAccountId) : (currentBankAccounts[0]?.id || '');
+
+      // If no bank accounts exist yet, auto-create the primary CBE account so money is never lost
+      if (!targetBankAccountId && currentBankAccounts.length === 0) {
+        const defaultAcc: BankAccount = {
+          id: 'acc-cbe-main',
+          name: 'Main Business Account',
+          bankName: 'Commercial Bank of Ethiopia (CBE)',
+          accountNumberMasked: '•••• 4821',
+          type: 'checking',
+          currentBalance: 0,
+          currency: settings.currency,
+          color: 'from-orange-700 to-amber-900',
+        };
+        currentBankAccounts = [defaultAcc];
+        setBankAccounts(currentBankAccounts);
+        saveUserLocalCollection('bankAccounts', currentBankAccounts, user?.uid);
+        targetBankAccountId = defaultAcc.id;
+      }
+
+      if (targetBankAccountId) {
+        const nextAccounts = currentBankAccounts.map((a) =>
+          a.id === targetBankAccountId
+            ? { ...a, currentBalance: a.currentBalance + transferAmount }
+            : a
+        );
+        setBankAccounts(nextAccounts);
+        saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+
+        const txId = sanitizeId(`btx-sale-${saleId}`);
+        const saleBankTx: BankTransaction = {
+          id: txId,
+          bankAccountId: targetBankAccountId,
+          date: newSale.date,
+          description: `Daily Bank Transfer Sales (${newSale.date}) — Ref ${newSale.receiptNumber}`,
+          type: 'credit',
+          amount: transferAmount,
+          category: 'sale_deposit',
+          referenceId: saleId,
+          isReconciled: true,
+          notes: `Auto-reconciled with Daily Sales ${newSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
+        };
+        const nextTxs = [
+          saleBankTx,
+          ...bankTransactions.filter((t) => t.id !== txId && t.referenceId !== saleId),
+        ];
+        setBankTransactions(nextTxs);
+        saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+
+        enqueueSyncMutation({
+          id: `sync-btx-${txId}`,
+          uid: user?.uid || 'guest',
+          collection: 'bankTransactions',
+          operation: 'set',
+          docId: txId,
+          data: {
+            ...saleBankTx,
+            ownerId: user?.uid || 'guest',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          timestamp: Date.now(),
+        });
+      }
     }
 
     // 4. Online Firestore write if user logged in
@@ -548,8 +607,8 @@ export default function App() {
     const oldTransfer = oldSale ? getSaleBankTransferAmount(oldSale) : 0;
     const oldBankId = oldSale?.bankAccountId || '';
     const newBankId =
-      transferAmount > 0 && updatedSale.bankAccountId
-        ? sanitizeId(updatedSale.bankAccountId)
+      transferAmount > 0
+        ? sanitizeId(updatedSale.bankAccountId || oldBankId || bankAccounts[0]?.id || 'acc-cbe-main')
         : '';
 
     if (oldTransfer > 0 || transferAmount > 0) {
@@ -561,6 +620,60 @@ export default function App() {
       });
       setBankAccounts(nextAccounts);
       saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+    }
+
+    const txId = sanitizeId(`btx-sale-${saleId}`);
+    if (transferAmount > 0 && newBankId) {
+      const saleBankTx: BankTransaction = {
+        id: txId,
+        bankAccountId: newBankId,
+        date: updatedSale.date,
+        description: `Daily Bank Transfer Sales (${updatedSale.date}) — Ref ${updatedSale.receiptNumber}`,
+        type: 'credit',
+        amount: transferAmount,
+        category: 'sale_deposit',
+        referenceId: saleId,
+        isReconciled: true,
+        notes: `Auto-reconciled with Daily Sales ${updatedSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
+      };
+      const nextTxs = [
+        saleBankTx,
+        ...bankTransactions.filter((t) => t.id !== txId && t.referenceId !== saleId),
+      ];
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+
+      enqueueSyncMutation({
+        id: `sync-btx-${txId}`,
+        uid: user?.uid || 'guest',
+        collection: 'bankTransactions',
+        operation: 'set',
+        docId: txId,
+        data: {
+          ...saleBankTx,
+          ownerId: user?.uid || 'guest',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        timestamp: Date.now(),
+      });
+    } else {
+      const nextTxs = bankTransactions.filter(
+        (t) => t.id !== txId && t.referenceId !== saleId
+      );
+      if (nextTxs.length !== bankTransactions.length) {
+        setBankTransactions(nextTxs);
+        saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+
+        enqueueSyncMutation({
+          id: `sync-del-btx-${txId}`,
+          uid: user?.uid || 'guest',
+          collection: 'bankTransactions',
+          operation: 'delete',
+          docId: txId,
+          timestamp: Date.now(),
+        });
+      }
     }
 
     // 4. Online Firestore write
@@ -591,7 +704,7 @@ export default function App() {
         }
 
         const txId = sanitizeId(`btx-sale-${saleId}`);
-        const existingAutoTx = bankTransactions.find((t) => t.id === txId);
+        const existingAutoTx = bankTransactions.find((t) => t.id === txId || t.referenceId === saleId);
         if (transferAmount > 0 && newBankId) {
           if (existingAutoTx) {
             await updateDoc(doc(db, 'bankTransactions', txId), {
@@ -648,6 +761,21 @@ export default function App() {
       timestamp: Date.now(),
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
+
+    const txId = sanitizeId(`btx-sale-${id}`);
+    const nextTxs = bankTransactions.filter((t) => t.id !== txId && t.referenceId !== id);
+    if (nextTxs.length !== bankTransactions.length) {
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+      enqueueSyncMutation({
+        id: `sync-del-btx-${txId}`,
+        uid: user?.uid || 'guest',
+        collection: 'bankTransactions',
+        operation: 'delete',
+        docId: txId,
+        timestamp: Date.now(),
+      });
+    }
 
     if (oldSale) {
       const oldTransfer = getSaleBankTransferAmount(oldSale);
@@ -1055,6 +1183,75 @@ export default function App() {
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
+    // Adjust bank account and bank transactions for cash deposit from register
+    const closeDeposit = Number(close.bankDepositAmount) || 0;
+    const oldDeposit = existingClose ? Number(existingClose.bankDepositAmount) || 0 : 0;
+    const txId = sanitizeId(`btx-close-${closeId}`);
+    const primaryAcc = bankAccounts[0];
+
+    if (closeDeposit > 0 && primaryAcc) {
+      const delta = closeDeposit - oldDeposit;
+      if (delta !== 0) {
+        const nextAccounts = bankAccounts.map((a) =>
+          a.id === primaryAcc.id ? { ...a, currentBalance: a.currentBalance + delta } : a
+        );
+        setBankAccounts(nextAccounts);
+        saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+      }
+
+      const depositTx: BankTransaction = {
+        id: txId,
+        bankAccountId: primaryAcc.id,
+        date: close.date,
+        description: `Daily Z-Report Register Cash Deposit (${close.date}) — Ref ${closeId}`,
+        type: 'credit',
+        amount: closeDeposit,
+        category: 'sales_cash_deposit',
+        referenceId: closeId,
+        isReconciled: true,
+        notes: `Reconciled with Z-Report physical cash drawer count for ${close.date}`,
+      };
+      const nextTxs = [depositTx, ...bankTransactions.filter((t) => t.id !== txId && t.referenceId !== closeId)];
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+
+      enqueueSyncMutation({
+        id: `sync-btx-${txId}`,
+        uid: user?.uid || 'guest',
+        collection: 'bankTransactions',
+        operation: 'set',
+        docId: txId,
+        data: {
+          ...depositTx,
+          ownerId: user?.uid || 'guest',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        timestamp: Date.now(),
+      });
+    } else if (oldDeposit > 0 && closeDeposit === 0) {
+      if (primaryAcc) {
+        const nextAccounts = bankAccounts.map((a) =>
+          a.id === primaryAcc.id ? { ...a, currentBalance: a.currentBalance - oldDeposit } : a
+        );
+        setBankAccounts(nextAccounts);
+        saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+      }
+      const nextTxs = bankTransactions.filter((t) => t.id !== txId && t.referenceId !== closeId);
+      if (nextTxs.length !== bankTransactions.length) {
+        setBankTransactions(nextTxs);
+        saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+        enqueueSyncMutation({
+          id: `sync-del-btx-${txId}`,
+          uid: user?.uid || 'guest',
+          collection: 'bankTransactions',
+          operation: 'delete',
+          docId: txId,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
     // 4. Online Firestore write
     await safeWrite(
       async () => {
@@ -1063,27 +1260,31 @@ export default function App() {
         } else {
           await setDoc(doc(db, 'dailyCloses', closeId), closePayload);
         }
-        if (!existingClose && close.bankDepositAmount > 0 && bankAccounts[0]) {
-          const targetAcc = bankAccounts[0];
-          await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-            currentBalance: targetAcc.currentBalance + close.bankDepositAmount,
-            updatedAt: serverTimestamp(),
-          });
-          const txId = sanitizeId(`btx-close-${Date.now()}`);
+        if (closeDeposit > 0 && primaryAcc) {
+          const delta = closeDeposit - oldDeposit;
+          if (delta !== 0) {
+            await updateDoc(doc(db, 'bankAccounts', primaryAcc.id), {
+              currentBalance: primaryAcc.currentBalance + delta,
+              updatedAt: serverTimestamp(),
+            });
+          }
           await setDoc(doc(db, 'bankTransactions', txId), {
             id: txId,
             ownerId: user!.uid,
-            bankAccountId: targetAcc.id,
+            bankAccountId: primaryAcc.id,
             date: close.date.slice(0, 30),
-            description: `Daily Z-Report Register Cash Deposit (${close.date})`.slice(0, 500),
+            description: `Daily Z-Report Register Cash Deposit (${close.date}) — Ref ${closeId}`.slice(0, 500),
             type: 'credit',
-            amount: Number(close.bankDepositAmount) || 0,
-            category: 'sale_deposit',
+            amount: closeDeposit,
+            category: 'sales_cash_deposit',
+            referenceId: closeId,
             isReconciled: true,
-            notes: 'Reconciled with Z-Report physical cash count',
+            notes: `Reconciled with Z-Report physical cash drawer count for ${close.date}`.slice(0, 1000),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
+        } else if (oldDeposit > 0 && closeDeposit === 0) {
+          await deleteDoc(doc(db, 'bankTransactions', txId)).catch(() => {});
         }
       },
       existingClose ? OperationType.UPDATE : OperationType.CREATE,
@@ -1096,6 +1297,7 @@ export default function App() {
   };
 
   const handleDeleteDailyClose = async (id: string) => {
+    const oldClose = dailyCloses.find((c) => c.id === id);
     const nextCloses = dailyCloses.filter((c) => c.id !== id);
     setDailyCloses(nextCloses);
     saveUserLocalCollection('dailyCloses', nextCloses, user?.uid);
@@ -1111,9 +1313,35 @@ export default function App() {
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
+    const txId = sanitizeId(`btx-close-${id}`);
+    const nextTxs = bankTransactions.filter((t) => t.id !== txId && t.referenceId !== id);
+    if (nextTxs.length !== bankTransactions.length) {
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+      enqueueSyncMutation({
+        id: `sync-del-btx-${txId}`,
+        uid: user?.uid || 'guest',
+        collection: 'bankTransactions',
+        operation: 'delete',
+        docId: txId,
+        timestamp: Date.now(),
+      });
+    }
+
+    if (oldClose && oldClose.bankDepositAmount > 0 && bankAccounts[0]) {
+      const primaryAcc = bankAccounts[0];
+      const nextAccounts = bankAccounts.map((a) =>
+        a.id === primaryAcc.id ? { ...a, currentBalance: a.currentBalance - oldClose.bankDepositAmount } : a
+      );
+      setBankAccounts(nextAccounts);
+      saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+    }
+
     await safeWrite(
       async () => {
         await deleteDoc(doc(db, 'dailyCloses', id));
+        const txId = sanitizeId(`btx-close-${id}`);
+        await deleteDoc(doc(db, 'bankTransactions', txId)).catch(() => {});
       },
       OperationType.DELETE,
       `dailyCloses/${id}`,

@@ -86,6 +86,13 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
   const [selectedBankId, setSelectedBankId] = useState<string>(bankAccounts[0]?.id || '');
   const [notes, setNotes] = useState('');
 
+  // Auto-sync default bank account if not selected
+  useEffect(() => {
+    if (!selectedBankId && bankAccounts[0]?.id) {
+      setSelectedBankId(bankAccounts[0].id);
+    }
+  }, [bankAccounts, selectedBankId]);
+
   // AI Smart Fill State
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
   const [aiPromptInput, setAiPromptInput] = useState('');
@@ -352,9 +359,10 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
       bankTransferAmount: Number(resolvedTransferAmount.toFixed(2)),
       paymentMethod: primaryPaymentMethod,
       bankAccountId:
-        resolvedTransferAmount > 0 ? selectedBankId || bankAccounts[0]?.id : undefined,
-      isReconciledWithBank:
-        resolvedTransferAmount > 0 && !!(selectedBankId || bankAccounts[0]?.id),
+        resolvedTransferAmount > 0
+          ? selectedBankId || bankAccounts[0]?.id || 'acc-cbe-main'
+          : undefined,
+      isReconciledWithBank: resolvedTransferAmount > 0,
       notes: notes.trim() || 'Daily total sales register entry (Cash + Bank Transfer)',
       createdAt: editingSale ? editingSale.createdAt : Date.now(),
     };
@@ -1295,16 +1303,26 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
           </div>
 
           <div>
-            <span className="text-xs text-stone-600">Cash Taken to Deposit in Bank Today</span>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-stone-700">Cash Taken to Deposit in Bank Today (Sales Cash Deposit)</span>
+              {closeBankTransferSales > 0 && (
+                <span className="text-purple-700 font-medium text-[11px]">
+                  Bank Transfer Sales ({formatCurrency(closeBankTransferSales, settings.currencySymbol)}) already in bank
+                </span>
+              )}
+            </div>
             <input
               type="number"
               step="0.01"
               min="0"
-              placeholder="Amount deposited in bank"
+              placeholder="e.g. 25000.00 cash taken to bank"
               value={bankDepositAmount || ''}
               onChange={(e) => setBankDepositAmount(parseFloat(e.target.value || '0'))}
               className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 font-mono"
             />
+            <p className="text-[11px] text-stone-500 mt-1">
+              Physical cash from register deposited at bank branch. This automatically creates a <strong>Sales Cash Deposit</strong> entry in your Bank Deposits feed.
+            </p>
           </div>
 
           <div>
