@@ -17,6 +17,7 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   defaultSalesTaxRate: 0.15, // 15% Ethiopian standard VAT rate
   corporateTaxRate: 0.30, // 30% Ethiopian business profit tax rate
   fiscalYearStartMonth: 7, // Ethiopian Fiscal Year / Hamle
+  autoSyncToGoogleSheets: true,
 };
 
 export const CURRENCY_OPTIONS = [

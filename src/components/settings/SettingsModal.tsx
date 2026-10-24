@@ -224,7 +224,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             {formData.googleAppsScriptUrl ? (
-              <div className="text-[11px] text-stone-600 space-y-1 pt-1 border-t border-emerald-200/60">
+              <div className="text-[11px] text-stone-600 space-y-2 pt-2 border-t border-emerald-200/60">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-semibold text-emerald-950 flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -234,8 +234,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Apps Script
                   </span>
                 </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <span className="font-medium text-stone-800 block text-xs">
+                      Automatic Sync to Sheets
+                    </span>
+                    <span className="text-[10px] text-stone-500">
+                      Syncs records automatically in background
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.autoSyncToGoogleSheets !== false}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          autoSyncToGoogleSheets: e.target.checked,
+                        }))
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-stone-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+
                 {formData.lastGoogleSheetSyncAt && (
-                  <div className="flex justify-between text-[10px] text-emerald-700">
+                  <div className="flex justify-between text-[10px] text-emerald-700 pt-1 border-t border-emerald-200/40">
                     <span>Last Synced:</span>
                     <span>{new Date(formData.lastGoogleSheetSyncAt).toLocaleString()}</span>
                   </div>

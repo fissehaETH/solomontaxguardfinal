@@ -133,6 +133,7 @@ export interface TaxSettings {
   lastGoogleSheetSyncAt?: string;
   googleAppsScriptUrl?: string;
   googleSyncMethod?: 'appscript';
+  autoSyncToGoogleSheets?: boolean; // When true, automatically syncs changes to Google Sheets in the background
 }
 
 export interface AuditDiagnosticItem {

@@ -55,6 +55,9 @@ interface AndroidShellProps {
   isQuotaExceeded?: boolean;
   pendingSyncCount?: number;
   onOpenSyncModal?: () => void;
+  autoSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
+  lastAutoSyncTime?: string | null;
+  hasAppsScriptUrl?: boolean;
 }
 
 export const AndroidShell: React.FC<AndroidShellProps> = ({
@@ -84,6 +87,9 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
   isQuotaExceeded = false,
   pendingSyncCount = 0,
   onOpenSyncModal,
+  autoSyncStatus = 'idle',
+  lastAutoSyncTime,
+  hasAppsScriptUrl = false,
 }) => {
   const isOnline = useOnlineStatus();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -273,15 +279,51 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
               </button>
             )}
 
-            {/* Google Sheets Dual Storage Button */}
+            {/* Google Sheets Dual Storage & Auto-Sync Status Button */}
             {onOpenGoogleSheets && (
               <button
                 onClick={onOpenGoogleSheets}
-                title="Store and sync financial records in Google Sheets"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors whitespace-nowrap shrink-0 min-h-[38px] cursor-pointer"
+                title={
+                  hasAppsScriptUrl
+                    ? autoSyncStatus === 'syncing'
+                      ? 'Syncing latest records to Google Sheets...'
+                      : autoSyncStatus === 'error'
+                      ? 'Auto-sync issue detected. Click to check settings.'
+                      : autoSyncStatus === 'offline'
+                      ? 'Offline: Changes queued and will auto-sync to Sheets once online'
+                      : `Google Sheets Auto-Sync is Active${
+                          lastAutoSyncTime
+                            ? ` · Last synced: ${new Date(lastAutoSyncTime).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}`
+                            : ''
+                        }`
+                    : 'Set up Google Sheets for automatic cloud sync'
+                }
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 min-h-[38px] cursor-pointer ${
+                  autoSyncStatus === 'syncing'
+                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-900 dark:text-emerald-200 border-emerald-400 dark:border-emerald-600'
+                    : autoSyncStatus === 'error'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-400 dark:border-amber-600'
+                    : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                }`}
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                <span className="hidden sm:inline">Google Sheets</span>
+                {autoSyncStatus === 'syncing' ? (
+                  <RefreshCw className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                )}
+                <span className="hidden sm:inline">
+                  {autoSyncStatus === 'syncing'
+                    ? 'Syncing to Sheets...'
+                    : autoSyncStatus === 'error'
+                    ? 'Sheets Warning'
+                    : 'Google Sheets'}
+                </span>
+                {hasAppsScriptUrl && autoSyncStatus !== 'syncing' && autoSyncStatus !== 'error' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                )}
               </button>
             )}
 
@@ -589,15 +631,17 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
                       </div>
                       <div>
                         <span className="text-sm font-bold block text-stone-900 dark:text-stone-100">
-                          Store in Google Sheets
+                          Google Sheets {hasAppsScriptUrl ? 'Auto-Sync' : 'Cloud Sync'}
                         </span>
                         <span className="text-[11px] text-emerald-800 dark:text-emerald-300 block">
-                          በጉግል ሺት ላይ ማስቀመጫ (Multi-Tab Cloud Sync)
+                          {hasAppsScriptUrl
+                            ? 'የራስ-ሰር ደመና ማመሳሰል (Active Auto-Sync)'
+                            : 'በጉግል ሺት ላይ ማስቀመጫ (Multi-Tab Cloud Sync)'}
                         </span>
                       </div>
                     </div>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-200/80 text-emerald-900 uppercase">
-                      Sheets
+                      {hasAppsScriptUrl ? 'Auto' : 'Sheets'}
                     </span>
                   </button>
                 )}

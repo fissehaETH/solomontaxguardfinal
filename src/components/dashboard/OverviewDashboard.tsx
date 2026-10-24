@@ -23,6 +23,7 @@ import {
   Pencil,
   Camera,
   FileSpreadsheet,
+  RefreshCw,
 } from 'lucide-react';
 import { ActiveTab } from '../layout/BottomNav';
 
@@ -42,6 +43,8 @@ interface OverviewDashboardProps {
   onOpenHelp?: () => void;
   onQuickExport?: () => void;
   onOpenGoogleSheets?: () => void;
+  autoSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
+  lastAutoSyncTime?: string | null;
 }
 
 export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
@@ -60,6 +63,8 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onOpenHelp,
   onQuickExport,
   onOpenGoogleSheets,
+  autoSyncStatus = 'idle',
+  lastAutoSyncTime,
 }) => {
   const today = new Date().toISOString().split('T')[0];
 
@@ -154,6 +159,94 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Google Sheets Dual-Ledger Auto-Sync Status Banner */}
+      {settings.googleAppsScriptUrl ? (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/50 to-emerald-50/40 border border-emerald-200/90 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-xs text-emerald-950 truncate">
+                  {settings.googleSheetName || 'Google Sheets Dual Ledger'}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {autoSyncStatus === 'syncing' ? (
+                    <>
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-700" />
+                      <span>Syncing...</span>
+                    </>
+                  ) : autoSyncStatus === 'error' ? (
+                    <span>Sync Warning</span>
+                  ) : (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                      <span>Auto-Sync Active</span>
+                    </>
+                  )}
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-600 truncate mt-0.5">
+                {autoSyncStatus === 'syncing'
+                  ? 'Syncing latest sales, purchases & bank records...'
+                  : lastAutoSyncTime || settings.lastGoogleSheetSyncAt
+                  ? `Changes automatically sync to Google Sheets · Last synced: ${new Date(
+                      lastAutoSyncTime || settings.lastGoogleSheetSyncAt!
+                    ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                  : 'Changes automatically sync to Google Sheets in background (~3s delay)'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {settings.googleSheetUrl && (
+              <a
+                href={settings.googleSheetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs shadow-2xs transition"
+              >
+                <span>Open Sheet</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </a>
+            )}
+            {onOpenGoogleSheets && (
+              <button
+                type="button"
+                onClick={onOpenGoogleSheets}
+                className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-semibold text-xs transition cursor-pointer"
+              >
+                Sync Settings
+              </button>
+            )}
+          </div>
+        </div>
+      ) : onOpenGoogleSheets ? (
+        <div className="p-3.5 rounded-2xl bg-white border border-stone-200 flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center shrink-0">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+            </div>
+            <div>
+              <span className="font-bold text-stone-900 block text-xs">
+                Automatic Google Sheets Sync Available
+              </span>
+              <span className="text-[11px] text-stone-500">
+                Connect your Google Sheet via Apps Script Web App to automatically mirror every sale, purchase, and cash audit.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenGoogleSheets}
+            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs transition shrink-0 cursor-pointer shadow-2xs"
+          >
+            Connect Sheets
+          </button>
+        </div>
+      ) : null}
 
       {/* 3 Core Financial Pillars Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

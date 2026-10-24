@@ -32,6 +32,7 @@ import {
   Check,
   Globe,
   HelpCircle,
+  Zap,
 } from 'lucide-react';
 import { formatDate } from '../../utils/formatters';
 
@@ -64,6 +65,9 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     settings.googleAppsScriptUrl || ''
   );
   const [customSheetId, setCustomSheetId] = useState(settings.googleSheetId || '');
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(
+    settings.autoSyncToGoogleSheets !== false
+  );
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -158,6 +162,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         googleSheetUrl: result.spreadsheetUrl || settings.googleSheetUrl,
         googleSheetName: result.spreadsheetTitle || settings.googleSheetName,
         lastGoogleSheetSyncAt: result.syncedAt,
+        autoSyncToGoogleSheets: autoSyncEnabled,
       });
 
       setSyncResult(result);
@@ -167,6 +172,20 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleSaveSettingsOnly = () => {
+    const cleanUrl = appsScriptUrl.trim();
+    onUpdateSettings({
+      ...settings,
+      googleAppsScriptUrl: cleanUrl,
+      googleSyncMethod: 'appscript',
+      autoSyncToGoogleSheets: autoSyncEnabled,
+    });
+    setTestUrlStatus({
+      success: true,
+      message: 'Google Sheets sync settings saved successfully!',
+    });
   };
 
   return (
@@ -353,6 +372,42 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
             )}
           </div>
 
+          {/* Automatic Sync Feature Toggle */}
+          <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50/80 to-teal-50/60 border border-emerald-200/80 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                  <Zap className="w-4 h-4 text-emerald-200" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-stone-900 flex items-center gap-2">
+                    <span>Automatic Sync to Google Sheets</span>
+                    {autoSyncEnabled && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        Active
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-stone-600">
+                    Automatically syncs sales, purchases, bank deposits &amp; register closes in the background.
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={autoSyncEnabled}
+                  onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-stone-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+            </div>
+            <p className="text-[10.5px] text-stone-500 leading-relaxed pl-10">
+              When enabled, any recorded sale, expense, bank transfer, or cash audit automatically updates your Google Sheet within ~3 seconds. No manual sync needed!
+            </p>
+          </div>
+
           {/* 5-Tab Structure Summary */}
           <div className="space-y-2">
             <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
@@ -461,27 +516,38 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
             disabled={isSyncing}
             className="px-4 py-2 rounded-xl bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 font-semibold text-xs transition cursor-pointer"
           >
-            Cancel
+            Close
           </button>
 
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={isSyncing || !appsScriptUrl.trim()}
-            className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-60"
-          >
-            {isSyncing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Syncing via Google Apps Script...</span>
-              </>
-            ) : (
-              <>
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Confirm &amp; Sync via Apps Script</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSaveSettingsOnly}
+              disabled={isSyncing || !appsScriptUrl.trim()}
+              className="px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50"
+            >
+              Save Settings
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSync}
+              disabled={isSyncing || !appsScriptUrl.trim()}
+              className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-60"
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Syncing via Google Apps Script...</span>
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Confirm &amp; Sync Now</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

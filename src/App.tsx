@@ -80,6 +80,7 @@ import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
 import { GoogleSheetsSyncModal } from './components/sheets/GoogleSheetsSyncModal';
+import { syncViaAppsScript } from './services/googleSheetsService';
 import { CheckCircle2, Landmark, ShieldCheck, LogIn, HelpCircle, Sun, Moon, Smartphone, FileSpreadsheet } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
@@ -140,6 +141,17 @@ export default function App() {
   const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
   const [initialEditingSale, setInitialEditingSale] = useState<SaleTransaction | null>(null);
   const [initialEditingPurchase, setInitialEditingPurchase] = useState<PurchaseItem | null>(null);
+
+  // Google Sheets Automatic Background Sync State
+  const [autoSyncStatus, setAutoSyncStatus] = useState<
+    'idle' | 'syncing' | 'synced' | 'error' | 'offline'
+  >('idle');
+  const [lastAutoSyncTime, setLastAutoSyncTime] = useState<string | null>(
+    initialLocal.settings.lastGoogleSheetSyncAt || null
+  );
+  const isFirstMountRef = React.useRef(true);
+  const isAutoSyncingRef = React.useRef(false);
+  const autoSyncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Light / Dark Mode Theme State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -290,6 +302,160 @@ export default function App() {
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, [user]);
+
+  // Automatically sync to Google Sheets via Apps Script Web App when financial data changes
+  useEffect(() => {
+    // Avoid triggering sync on initial render hydration
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+
+    const cleanUrl = settings.googleAppsScriptUrl?.trim();
+    const isAutoSyncEnabled = settings.autoSyncToGoogleSheets !== false;
+
+    if (!cleanUrl || !isAutoSyncEnabled) {
+      return;
+    }
+
+    if (autoSyncTimeoutRef.current) {
+      clearTimeout(autoSyncTimeoutRef.current);
+    }
+
+    // Debounce 3.5 seconds after the user's latest interaction to batch edits into single Apps Script request
+    autoSyncTimeoutRef.current = setTimeout(async () => {
+      if (isAutoSyncingRef.current) return;
+
+      if (!navigator.onLine) {
+        setAutoSyncStatus('offline');
+        return;
+      }
+
+      isAutoSyncingRef.current = true;
+      setAutoSyncStatus('syncing');
+
+      try {
+        const cashAudit = calculateDailyCashExamination(
+          sales,
+          purchases,
+          bankTransactions,
+          dailyCloses
+        );
+
+        const res = await syncViaAppsScript(cleanUrl, {
+          appsScriptUrl: cleanUrl,
+          existingSpreadsheetId: settings.googleSheetId,
+          settings,
+          sales,
+          purchases,
+          bankAccounts,
+          bankTransactions,
+          dailyCloses,
+          dailyCashAudit: cashAudit,
+        });
+
+        if (res.success) {
+          setAutoSyncStatus('synced');
+          setLastAutoSyncTime(res.syncedAt);
+          setSettings((prev) => {
+            const updated: TaxSettings = {
+              ...prev,
+              lastGoogleSheetSyncAt: res.syncedAt,
+              googleSheetId: res.spreadsheetId || prev.googleSheetId,
+              googleSheetUrl: res.spreadsheetUrl || prev.googleSheetUrl,
+              googleSheetName: res.spreadsheetTitle || prev.googleSheetName,
+            };
+            saveUserLocalSettings(updated, user?.uid);
+            return updated;
+          });
+        } else {
+          setAutoSyncStatus('error');
+        }
+      } catch (err) {
+        console.warn('Auto-sync to Google Sheets failed:', err);
+        setAutoSyncStatus('error');
+      } finally {
+        isAutoSyncingRef.current = false;
+      }
+    }, 3500);
+
+    return () => {
+      if (autoSyncTimeoutRef.current) {
+        clearTimeout(autoSyncTimeoutRef.current);
+      }
+    };
+  }, [
+    sales,
+    purchases,
+    bankAccounts,
+    bankTransactions,
+    dailyCloses,
+    settings.businessName,
+    settings.taxIdNumber,
+    settings.currency,
+    settings.defaultSalesTaxRate,
+    settings.corporateTaxRate,
+    settings.googleAppsScriptUrl,
+    settings.autoSyncToGoogleSheets,
+  ]);
+
+  // Background auto-sync to Google Sheets upon network reconnection
+  useEffect(() => {
+    const handleReconnected = () => {
+      const cleanUrl = settings.googleAppsScriptUrl?.trim();
+      const isAutoSyncEnabled = settings.autoSyncToGoogleSheets !== false;
+
+      if (cleanUrl && isAutoSyncEnabled && !isAutoSyncingRef.current) {
+        isAutoSyncingRef.current = true;
+        setAutoSyncStatus('syncing');
+
+        const cashAudit = calculateDailyCashExamination(
+          sales,
+          purchases,
+          bankTransactions,
+          dailyCloses
+        );
+
+        syncViaAppsScript(cleanUrl, {
+          appsScriptUrl: cleanUrl,
+          existingSpreadsheetId: settings.googleSheetId,
+          settings,
+          sales,
+          purchases,
+          bankAccounts,
+          bankTransactions,
+          dailyCloses,
+          dailyCashAudit: cashAudit,
+        })
+          .then((res) => {
+            if (res.success) {
+              setAutoSyncStatus('synced');
+              setLastAutoSyncTime(res.syncedAt);
+              setSettings((prev) => {
+                const updated: TaxSettings = {
+                  ...prev,
+                  lastGoogleSheetSyncAt: res.syncedAt,
+                  googleSheetId: res.spreadsheetId || prev.googleSheetId,
+                  googleSheetUrl: res.spreadsheetUrl || prev.googleSheetUrl,
+                  googleSheetName: res.spreadsheetTitle || prev.googleSheetName,
+                };
+                saveUserLocalSettings(updated, user?.uid);
+                return updated;
+              });
+            }
+          })
+          .catch(() => {
+            setAutoSyncStatus('error');
+          })
+          .finally(() => {
+            isAutoSyncingRef.current = false;
+          });
+      }
+    };
+
+    window.addEventListener('online', handleReconnected);
+    return () => window.removeEventListener('online', handleReconnected);
+  }, [sales, purchases, bankAccounts, bankTransactions, dailyCloses, settings, user?.uid]);
 
   // On-demand cloud refresh: pulls latest data from remote Firestore and updates local storage
   const handleRefreshFromCloud = async () => {
@@ -2960,6 +3126,9 @@ export default function App() {
       isQuotaExceeded={isQuotaExceeded}
       pendingSyncCount={pendingSyncCount}
       onOpenSyncModal={() => setIsSyncModalOpen(true)}
+      autoSyncStatus={autoSyncStatus}
+      lastAutoSyncTime={lastAutoSyncTime}
+      hasAppsScriptUrl={Boolean(settings.googleAppsScriptUrl)}
     >
       {/* Toast Notification */}
       {toastMessage && (
@@ -2979,6 +3148,9 @@ export default function App() {
           dailyCloses={dailyCloses}
           settings={settings}
           setActiveTab={setActiveTab}
+          autoSyncStatus={autoSyncStatus}
+          lastAutoSyncTime={lastAutoSyncTime}
+          onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
           onOpenAddSale={() => {
             setInitialEditingSale(null);
             setActiveTab('sales');
