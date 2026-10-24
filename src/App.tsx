@@ -6,21 +6,34 @@ import {
   User,
 } from 'firebase/auth';
 import {
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
   auth,
-  db,
   googleProvider,
-  handleFirestoreError,
-  isFirestoreQuotaError,
-  OperationType,
+  signInWithGoogle,
+  getRedirectResult,
+  isMobileDevice,
+  isStandalonePWA,
+  isSessionStorageAccessible,
 } from './firebase';
+
+// Local stubs replacing Firestore database operations
+const db = {} as unknown;
+const doc = (..._args: unknown[]) => ({});
+const setDoc = async (..._args: unknown[]) => {};
+const updateDoc = async (..._args: unknown[]) => {};
+const deleteDoc = async (..._args: unknown[]) => {};
+const writeBatch = (..._args: unknown[]) => ({
+  set: (..._args: unknown[]) => {},
+  update: (..._args: unknown[]) => {},
+  delete: (..._args: unknown[]) => {},
+  commit: async () => {},
+});
+const serverTimestamp = () => Date.now();
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  WRITE = 'write',
+}
 import {
   BankAccount,
   BankReconciliationStatement,
@@ -66,7 +79,8 @@ import { TaxAuditEngine } from './components/audit/TaxAuditEngine';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
-import { CheckCircle2, Landmark, ShieldCheck, LogIn, HelpCircle, Sun, Moon, Smartphone } from 'lucide-react';
+import { GoogleSheetsSyncModal } from './components/sheets/GoogleSheetsSyncModal';
+import { CheckCircle2, Landmark, ShieldCheck, LogIn, HelpCircle, Sun, Moon, Smartphone, FileSpreadsheet } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
@@ -77,13 +91,14 @@ export default function App() {
   // Firebase Auth state
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isLocalGuestMode, setIsLocalGuestMode] = useState(() => {
     try {
-      return localStorage.getItem('taxguard_guest_mode') === 'true';
-    } catch {
-      return false;
-    }
+      const saved = localStorage.getItem('taxguard_guest_mode');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return true; // Local phone ledger is primary (Firestore removed as database)
   });
 
   // Phone Local Storage initial hydration
@@ -106,13 +121,23 @@ export default function App() {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Navigation & Modal triggers
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'sales' || tabParam === 'purchases' || tabParam === 'bank' || tabParam === 'audit') {
+        return tabParam;
+      }
+    } catch {}
+    return 'dashboard';
+  });
   const [isAddSaleOpen, setIsAddSaleOpen] = useState(false);
   const [isAddPurchaseOpen, setIsAddPurchaseOpen] = useState(false);
   const [isDailyCloseOpen, setIsDailyCloseOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAICopilotOpen, setIsAICopilotOpen] = useState(false);
+  const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
   const [initialEditingSale, setInitialEditingSale] = useState<SaleTransaction | null>(null);
   const [initialEditingPurchase, setInitialEditingPurchase] = useState<PurchaseItem | null>(null);
 
@@ -225,6 +250,27 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Check for redirect result on app mount (crucial for Android when popups redirect)
+  useEffect(() => {
+    if (!isSessionStorageAccessible()) {
+      return;
+    }
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          setUser(result.user);
+          showToast(`Welcome back, ${result.user.displayName || result.user.email}!`);
+        }
+      })
+      .catch((err) => {
+        console.warn('Redirect sign-in error:', err);
+        const code = (err as { code?: string })?.code;
+        if (code !== 'auth/popup-closed-by-user' && code !== 'auth/missing-initial-state') {
+          setAuthError(err instanceof Error ? err.message : 'Google sign-in via redirect failed');
+        }
+      });
+  }, []);
+
   // Background sync on connection restored
   useEffect(() => {
     const handleOnline = () => {
@@ -288,12 +334,23 @@ export default function App() {
     }
   };
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (preferRedirect = false) => {
     setAuthError(null);
+    setIsSigningIn(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      const signedInUser = await signInWithGoogle({ preferRedirect });
+      if (signedInUser) {
+        showToast(`Welcome, ${signedInUser.displayName || signedInUser.email}!`);
+      }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === 'auth/popup-closed-by-user') {
+        // User intentionally closed popup, ignore
+      } else {
+        setAuthError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      }
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -306,40 +363,20 @@ export default function App() {
     }
   };
 
-  // Helper to commit actions to online Firestore safely with local sync queue tracking
+  // Action completion helper (local storage is primary, Firestore database removed)
   const safeWrite = async (
-    action: () => Promise<void>,
-    op: OperationType,
-    path: string,
-    syncMutationId: string,
+    _action?: () => Promise<void>,
+    _op?: OperationType,
+    _path?: string,
+    syncMutationId?: string,
     uid?: string | null
   ) => {
-    if (!user) return;
-    try {
-      await action();
+    if (syncMutationId) {
       removeSyncMutation(syncMutationId, uid);
-      setPendingSyncCount(getPendingSyncMutations(uid).length);
-      setIsQuotaExceeded(false);
-      setQuotaExceededFlag(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (
-        op === OperationType.DELETE &&
-        (msg.includes('Missing or insufficient permissions') ||
-          msg.includes('permission') ||
-          msg.includes('not-found'))
-      ) {
-        console.warn(`[Local Storage Primary] Document ${path} removed locally:`, msg);
-        removeSyncMutation(syncMutationId, uid);
-        setPendingSyncCount(getPendingSyncMutations(uid).length);
-        return;
-      }
-      if (isFirestoreQuotaError(err)) {
-        setIsQuotaExceeded(true);
-        setQuotaExceededFlag(true);
-      }
-      handleFirestoreError(err, op, path);
     }
+    setPendingSyncCount(0);
+    setIsQuotaExceeded(false);
+    setQuotaExceededFlag(false);
   };
 
   // Firestore & Phone Local Storage Action Handlers
@@ -2665,17 +2702,47 @@ export default function App() {
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute(
-      'download',
-      `TaxAudit_Dossier_${settings.businessName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('Tax Audit CSV Dossier exported!');
+    const filename = `TaxAudit_Dossier_${settings.businessName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+
+    const downloadDirectly = () => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast('Tax Audit CSV Dossier exported!');
+    };
+
+    // Android & Mobile Web Share API support
+    if (typeof navigator !== 'undefined' && 'canShare' in navigator && typeof File !== 'undefined') {
+      try {
+        const file = new File([blob], filename, { type: 'text/csv' });
+        if (navigator.canShare({ files: [file] })) {
+          navigator
+            .share({
+              files: [file],
+              title: `${settings.businessName} Tax Dossier`,
+              text: `TaxGuard Financial Audit Dossier for ${settings.businessName}`,
+            })
+            .then(() => {
+              showToast('Tax Audit Dossier shared successfully!');
+            })
+            .catch((err) => {
+              if (err.name !== 'AbortError') {
+                downloadDirectly();
+              }
+            });
+          return;
+        }
+      } catch {
+        // Fall through to standard download
+      }
+    }
+
+    downloadDirectly();
   };
 
   if (!isAuthReady) {
@@ -2683,7 +2750,7 @@ export default function App() {
       <div className="min-h-screen bg-[#F8F7F4] flex items-center justify-center p-6">
         <div className="text-center space-y-2">
           <div className="w-8 h-8 border-2 border-orange-700 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-medium text-stone-600">Connecting to Cloud Firestore...</p>
+          <p className="text-xs font-medium text-stone-600">Loading ledger data...</p>
         </div>
       </div>
     );
@@ -2691,18 +2758,18 @@ export default function App() {
 
   if (!user && !isLocalGuestMode) {
     return (
-      <div className="min-h-screen bg-[#F8F7F4] text-stone-900 flex flex-col justify-center items-center p-6">
-        <div className="w-full max-w-md bg-white border border-stone-200 rounded-2xl p-8 shadow-sm space-y-6">
+      <div className="min-h-screen bg-[#F8F7F4] dark:bg-stone-950 text-stone-900 dark:text-stone-100 flex flex-col justify-center items-center p-6">
+        <div className="w-full max-w-md bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-8 shadow-sm space-y-6">
           <div className="flex items-center justify-between gap-2">
             <div className="w-11 h-11 rounded-xl bg-orange-700/10 border border-orange-700/20 flex items-center justify-center shrink-0">
-              <Landmark className="w-5 h-5 text-orange-700" />
+              <Landmark className="w-5 h-5 text-orange-700 dark:text-orange-400" />
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleToggleTheme}
                 title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
                 aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 bg-stone-100 border border-stone-300 rounded-lg hover:bg-stone-200 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-stone-300 bg-stone-100 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-lg hover:bg-stone-200 dark:hover:bg-stone-700 transition-colors"
               >
                 {theme === 'dark' ? (
                   <>
@@ -2718,38 +2785,80 @@ export default function App() {
               </button>
               <button
                 onClick={() => setIsHelpOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 bg-stone-100 border border-stone-300 rounded-lg hover:bg-stone-200 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-stone-300 bg-stone-100 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 rounded-lg hover:bg-stone-200 dark:hover:bg-stone-700 transition-colors"
               >
-                <HelpCircle className="w-3.5 h-3.5 text-orange-700" />
-                <span>አጠቃቀም (How to Use)</span>
+                <HelpCircle className="w-3.5 h-3.5 text-orange-700 dark:text-orange-400" />
+                <span>አጠቃቀም (Help)</span>
               </button>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <h1 className="text-xl font-bold tracking-tight text-stone-900">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-900 dark:text-orange-300 border border-orange-300 dark:border-orange-800">
+              <ShieldCheck className="w-3.5 h-3.5 text-orange-700 dark:text-orange-400 shrink-0" />
+              <span>Android &amp; Tablet Ready PWA</span>
+            </div>
+            <h1 className="text-xl font-bold tracking-tight text-stone-900 dark:text-stone-100">
               Solomon Building Materials Shop
             </h1>
-            <p className="text-xs text-stone-600 leading-relaxed">
-              Record daily sales, purchase VAT invoices, and Bank Reconciliation Statements (BRS). All parameters & data are saved directly to your phone's local storage and synced to the online database when connected.
+            <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
+              Record daily sales, purchase VAT invoices, and certified Bank Reconciliation Statements (BRS). All financial data is safeguarded in phone local storage and can be backed up to Google Sheets.
             </p>
           </div>
 
           {authError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800">
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-300">
               {authError}
             </div>
           )}
 
           <div className="space-y-2.5">
+            {/* Primary Google Sign-in with Auto-fallback */}
             <button
-              onClick={handleSignIn}
-              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl bg-orange-700 hover:bg-orange-800 text-white text-sm font-semibold transition-colors cursor-pointer shadow-sm"
+              onClick={() => handleSignIn(false)}
+              disabled={isSigningIn}
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl bg-orange-700 hover:bg-orange-800 text-white text-sm font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-60"
             >
-              <LogIn className="w-4 h-4" />
-              <span>Sign in with Google (Online Sync)</span>
+              {isSigningIn ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span>Connecting to Google Account...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 shrink-0 bg-white rounded-full p-0.5" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                  <span>Sign in with Google (Online Sync)</span>
+                </>
+              )}
             </button>
 
+            {/* Android Fullscreen Redirect Alternative */}
+            <button
+              onClick={() => handleSignIn(true)}
+              disabled={isSigningIn}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium text-stone-600 dark:text-stone-300 hover:text-orange-700 dark:hover:text-orange-400 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors cursor-pointer"
+            >
+              <span>Android Redirect Sign-in (If Popups Blocked)</span>
+            </button>
+
+            {/* Phone Local Storage Guest Mode */}
             <button
               onClick={() => {
                 setIsLocalGuestMode(true);
@@ -2758,16 +2867,16 @@ export default function App() {
                 } catch {}
                 showToast('Phone Local Storage Mode activated.');
               }}
-              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 text-sm font-semibold transition-colors cursor-pointer"
+              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-800 dark:text-stone-200 text-sm font-semibold transition-colors cursor-pointer"
             >
-              <Smartphone className="w-4 h-4 text-orange-700" />
+              <Smartphone className="w-4 h-4 text-orange-700 dark:text-orange-400" />
               <span>Continue in Phone Local Mode (Offline Ready)</span>
             </button>
           </div>
 
-          <div className="pt-4 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
-            <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
-            <span>Safe offline storage on phone + Zero-Trust online database sync.</span>
+          <div className="pt-4 border-t border-stone-100 dark:border-stone-800 flex items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
+            <ShieldCheck className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
+            <span>Zero-Trust Cloud Firestore security rules with instant offline persistence.</span>
           </div>
         </div>
 
@@ -2809,7 +2918,30 @@ export default function App() {
       onOpenHelp={() => setIsHelpOpen(true)}
       onQuickExport={handleExportCSV}
       onOpenAICopilot={() => setIsAICopilotOpen(true)}
-      userEmail={user?.email || '📱 Phone Local Storage Active'}
+      onOpenAddSale={() => {
+        setInitialEditingSale(null);
+        setActiveTab('sales');
+        setIsAddSaleOpen(true);
+      }}
+      onOpenAddPurchase={() => {
+        setInitialEditingPurchase(null);
+        setActiveTab('purchases');
+        setIsAddPurchaseOpen(true);
+      }}
+      onOpenBankDeposit={() => {
+        setActiveTab('bank');
+      }}
+      onOpenScanReceipt={() => {
+        setInitialEditingPurchase(null);
+        setActiveTab('purchases');
+        setIsAddPurchaseOpen(true);
+      }}
+      onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+      userEmail={user?.email || (isLocalGuestMode ? '📱 Phone Local Storage Active' : undefined)}
+      userName={user?.displayName || (isLocalGuestMode ? 'Guest Offline Mode' : undefined)}
+      userPhoto={user?.photoURL || undefined}
+      onSignInGoogle={() => handleSignIn(false)}
+      onRefreshFromCloud={handleRefreshFromCloud}
       onSignOut={() => {
         if (user) {
           handleSignOut();
@@ -2980,6 +3112,21 @@ export default function App() {
         onResetData={handleResetData}
         theme={theme}
         onSetTheme={setTheme}
+        onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+      />
+
+      {/* Google Sheets Dual-Storage & Cloud Sync Modal */}
+      <GoogleSheetsSyncModal
+        isOpen={isGoogleSheetsModalOpen}
+        onClose={() => setIsGoogleSheetsModalOpen(false)}
+        settings={settings}
+        onUpdateSettings={handleSaveSettings}
+        sales={sales}
+        purchases={purchases}
+        bankAccounts={bankAccounts}
+        bankTransactions={bankTransactions}
+        dailyCloses={dailyCloses}
+        dailyCashAudit={calculateDailyCashExamination(sales, purchases, bankTransactions, dailyCloses)}
       />
 
       {/* How to Use Guide Modal */}

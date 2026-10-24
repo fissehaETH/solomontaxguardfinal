@@ -1482,6 +1482,7 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
                         type="number"
                         step="0.01"
                         min="0.01"
+                        inputMode="decimal"
                         placeholder="0.00"
                         value={newRow.amount || ''}
                         onChange={(e) => setNewRow({ ...newRow, amount: parseFloat(e.target.value) || 0 })}
@@ -1616,6 +1617,7 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
                           <input
                             type="number"
                             step="0.01"
+                            inputMode="decimal"
                             value={editFormData.amount || ''}
                             onChange={(e) => setEditFormData({ ...editFormData, amount: parseFloat(e.target.value) || 0 })}
                             className="px-2 py-1 rounded bg-white dark:bg-stone-800 border border-stone-300 text-xs font-tabular font-bold"

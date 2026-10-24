@@ -1061,6 +1061,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
                     type="number"
                     step="0.01"
                     min="0.01"
+                    inputMode="decimal"
                     required
                     placeholder="e.g. 85000.00"
                     value={totalDailyAmount || ''}
@@ -1080,6 +1081,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
                     type="number"
                     step="0.01"
                     min="0"
+                    inputMode="decimal"
                     max={calculatedTotal > 0 ? calculatedTotal : undefined}
                     placeholder="e.g. 30000.00"
                     value={dailyTransferAmount || ''}
@@ -1234,6 +1236,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
                 type="number"
                 step="0.01"
                 min="0"
+                inputMode="decimal"
                 required
                 value={openingFloat}
                 onChange={(e) => setOpeningFloat(parseFloat(e.target.value || '0'))}
@@ -1277,6 +1280,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
               type="number"
               step="0.01"
               min="0"
+              inputMode="decimal"
               required
               placeholder="e.g. 41395.00"
               value={actualCashCounted || ''}
@@ -1315,6 +1319,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
               type="number"
               step="0.01"
               min="0"
+              inputMode="decimal"
               placeholder="e.g. 25000.00 cash taken to bank"
               value={bankDepositAmount || ''}
               onChange={(e) => setBankDepositAmount(parseFloat(e.target.value || '0'))}

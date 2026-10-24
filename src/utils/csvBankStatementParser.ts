@@ -641,6 +641,7 @@ export function parseBankStatementCSV(
       pageNumber: 1,
       date: isoDate,
       description,
+      reason: description,
       type,
       amount,
       category,

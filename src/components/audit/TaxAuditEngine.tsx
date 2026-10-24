@@ -46,6 +46,9 @@ import {
   Landmark,
   ChevronDown,
   Info,
+  HeartHandshake,
+  Lightbulb,
+  Check,
 } from 'lucide-react';
 import { ActiveTab } from '../layout/BottomNav';
 import {
@@ -63,6 +66,12 @@ import {
   DailyCashAuditSummary,
   ETHIOPIAN_CASH_PURCHASE_LIMIT,
 } from '../../utils/dailyCashReconciliation';
+import {
+  auditBankReasonAndCategory,
+  exportBankAuditFindingsCSV,
+  BankAuditFinding,
+  AuditClassification,
+} from '../../utils/bankAuditEngine';
 import { TaxAuditManualModal } from './TaxAuditManualModal';
 
 interface TaxAuditEngineProps {
@@ -98,6 +107,7 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
   const [activeEngineTab, setActiveEngineTab] = useState<
     | 'overview'
     | 'daily_cash'
+    | 'bank_reason_category'
     | 'mor_checklist'
     | 'indirect_methods'
     | 'penalties'
@@ -114,11 +124,70 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
   >('all');
   const [dailyCashSort, setDailyCashSort] = useState<'chronological' | 'reverse'>('chronological');
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [isCashFormulaOpen, setIsCashFormulaOpen] = useState(false);
+  const [isFriendlyAdviceOpen, setIsFriendlyAdviceOpen] = useState(true);
+
+  // Bank Reason & Category Forensic Audit State
+  const [bankAuditSearch, setBankAuditSearch] = useState('');
+  const [bankAuditRiskFilter, setBankAuditRiskFilter] = useState<
+    'all' | 'high' | 'medium' | 'compliant'
+  >('all');
+  const [bankAuditFlowFilter, setBankAuditFlowFilter] = useState<'all' | 'credit' | 'debit'>('all');
+  const [bankAuditClassificationFilter, setBankAuditClassificationFilter] = useState<
+    'all' | AuditClassification
+  >('all');
 
   // Compute Daily Cash Reconciliation
   const dailyCashAudit = useMemo(() => {
     return calculateDailyCashExamination(sales, purchases, bankTransactions, dailyCloses);
   }, [sales, purchases, bankTransactions, dailyCloses]);
+
+  // Compute Bank Reason & Category Forensic Audit
+  const bankReasonAudit = useMemo(() => {
+    return auditBankReasonAndCategory(
+      bankTransactions,
+      sales,
+      purchases,
+      settings.corporateTaxRate,
+      settings.defaultSalesTaxRate
+    );
+  }, [bankTransactions, sales, purchases, settings.corporateTaxRate, settings.defaultSalesTaxRate]);
+
+  // Filtered Bank Audit Findings
+  const filteredBankFindings = useMemo(() => {
+    return bankReasonAudit.findings.filter((finding) => {
+      if (bankAuditRiskFilter !== 'all' && finding.riskLevel !== bankAuditRiskFilter) {
+        return false;
+      }
+      if (bankAuditFlowFilter !== 'all' && finding.type !== bankAuditFlowFilter) {
+        return false;
+      }
+      if (
+        bankAuditClassificationFilter !== 'all' &&
+        finding.auditClassification !== bankAuditClassificationFilter
+      ) {
+        return false;
+      }
+      if (bankAuditSearch.trim()) {
+        const query = bankAuditSearch.toLowerCase();
+        const inReason = (finding.reason || '').toLowerCase().includes(query);
+        const inDesc = (finding.description || '').toLowerCase().includes(query);
+        const inTitle = (finding.findingTitle || '').toLowerCase().includes(query);
+        const inArticle = (finding.proclamationArticle || '').toLowerCase().includes(query);
+        const inCategory = (finding.category || '').toLowerCase().includes(query);
+        if (!inReason && !inDesc && !inTitle && !inArticle && !inCategory) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    bankReasonAudit.findings,
+    bankAuditRiskFilter,
+    bankAuditFlowFilter,
+    bankAuditClassificationFilter,
+    bankAuditSearch,
+  ]);
 
   // Financial aggregates
   const totalGrossRevenue = sales.reduce((acc, s) => acc + s.totalAmount, 0);
@@ -270,6 +339,26 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
           {dailyCashAudit.highRiskCount > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-600 text-white ml-0.5">
               {dailyCashAudit.highRiskCount} Flagged
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveEngineTab('bank_reason_category')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-semibold transition whitespace-nowrap cursor-pointer ${
+            activeEngineTab === 'bank_reason_category'
+              ? 'bg-stone-900 text-white shadow-xs'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+          }`}
+        >
+          <Landmark className="w-3.5 h-3.5 text-blue-500" />
+          <span>Bank Reason &amp; Category Audit</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 ml-0.5">
+            {bankReasonAudit.findings.length} Txns
+          </span>
+          {bankReasonAudit.highRiskCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-600 text-white ml-0.5">
+              {bankReasonAudit.highRiskCount} Risk
             </span>
           )}
         </button>
@@ -434,6 +523,107 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Bank Reason & Category Forensic Audit Card */}
+          <div className="p-5 rounded-2xl bg-white border border-stone-200 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-stone-200">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center shrink-0">
+                  <Landmark className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-stone-900">
+                      Bank Reason &amp; Category Examination
+                    </h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-blue-100 text-blue-800 rounded-full border border-blue-200">
+                      Proc. 979 Art. 17 &amp; 27
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-500">
+                    Audit of bank deposit reasons (memos) and expense categories under MoR Indirect Audit directives
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setActiveEngineTab('bank_reason_category')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer self-start sm:self-auto"
+              >
+                <span>Open Forensic View</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200">
+                <span className="text-stone-500 block text-[11px]">Total Bank Deposits</span>
+                <span className="font-bold text-stone-900 font-tabular text-sm mt-0.5 block">
+                  {formatCurrency(bankReasonAudit.totalBankCredits, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-stone-400">Total inflows audited</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200">
+                <span className="text-stone-500 block text-[11px]">Verified Non-Income</span>
+                <span className="font-bold text-emerald-700 font-tabular text-sm mt-0.5 block">
+                  {formatCurrency(bankReasonAudit.verifiedNonTaxableInflows, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-emerald-600">Loans, Equity &amp; Transfers</span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200">
+                <span className="text-stone-500 block text-[11px]">Unexplained Deposits</span>
+                <span
+                  className={`font-bold font-tabular text-sm mt-0.5 block ${
+                    bankReasonAudit.unexplainedDepositsAmount > 0 ? 'text-rose-700' : 'text-stone-900'
+                  }`}
+                >
+                  {formatCurrency(bankReasonAudit.unexplainedDepositsAmount, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-rose-600">
+                  {bankReasonAudit.unexplainedDepositsCount} txns (Taxable risk)
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200">
+                <span className="text-stone-500 block text-[11px]">Art. 27 Disallowed Drawings</span>
+                <span
+                  className={`font-bold font-tabular text-sm mt-0.5 block ${
+                    bankReasonAudit.disallowedPersonalDrawingsAmount > 0
+                      ? 'text-amber-700'
+                      : 'text-stone-900'
+                  }`}
+                >
+                  {formatCurrency(
+                    bankReasonAudit.disallowedPersonalDrawingsAmount,
+                    settings.currencySymbol
+                  )}
+                </span>
+                <span className="text-[10px] text-amber-700">
+                  {bankReasonAudit.disallowedPersonalDrawingsCount} personal items
+                </span>
+              </div>
+            </div>
+
+            {bankReasonAudit.totalTaxRiskExposure > 0 && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
+                  <span className="text-rose-900">
+                    <strong>MoR Presumption Exposure:</strong> Unexplained deposits &amp; Art. 27 drawings create an estimated{' '}
+                    <strong>{formatCurrency(bankReasonAudit.totalTaxRiskExposure, settings.currencySymbol)}</strong> tax &amp; penalty risk if left unlinked.
+                  </span>
+                </div>
+                <button
+                  onClick={() => setActiveEngineTab('bank_reason_category')}
+                  className="px-2.5 py-1 rounded bg-rose-700 text-white font-semibold text-[11px] hover:bg-rose-800 shrink-0 cursor-pointer self-start sm:self-auto"
+                >
+                  Review Flagged Items
+                </button>
               </div>
             )}
           </div>
@@ -703,25 +893,25 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                 </div>
               </div>
 
-              {/* 4. Bank Deposits & Undeposited Cash */}
+              {/* 4. Bank Deposits & Cash in Safe */}
               <div className="p-3.5 rounded-xl bg-white border border-stone-200 space-y-1.5">
                 <div className="flex items-center justify-between text-stone-500">
                   <span>4. Actual Bank Deposits Recorded:</span>
-                  <span className="font-semibold text-stone-800 font-tabular">
-                    {dailyCashAudit.depositComplianceRate}%
+                  <span className="font-semibold text-stone-800 font-tabular text-[11px]">
+                    {dailyCashAudit.depositComplianceRate}% Banked
                   </span>
                 </div>
                 <div className="text-base font-bold text-emerald-800 font-tabular">
                   {formatCurrency(dailyCashAudit.totalActualBankDeposits, settings.currencySymbol)}
                 </div>
-                <div className="text-[11px] space-y-0.5 pt-1 border-t border-stone-100">
-                  <div className="flex justify-between">
-                    <span className="text-stone-500">Undeposited Cash On Hand:</span>
+                <div className="text-[11px] space-y-1 pt-1.5 border-t border-stone-100">
+                  <div className="flex justify-between items-center">
+                    <span className="text-stone-600 font-medium">Cash in Safe/Drawer:</span>
                     <span
                       className={`font-bold font-tabular ${
-                        Math.abs(dailyCashAudit.netUndepositedCashBalance) < 5000
+                        Math.abs(dailyCashAudit.netUndepositedCashBalance) <= 5000
                           ? 'text-emerald-700'
-                          : dailyCashAudit.netUndepositedCashBalance > 0
+                          : dailyCashAudit.netUndepositedCashBalance > 5000
                           ? 'text-amber-800'
                           : 'text-indigo-700'
                       }`}
@@ -729,9 +919,23 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                       {formatCurrency(dailyCashAudit.netUndepositedCashBalance, settings.currencySymbol)}
                     </span>
                   </div>
-                  <div className="flex justify-between text-stone-500">
-                    <span>In-Vault / Register:</span>
-                    <span>{dailyCashAudit.netUndepositedCashBalance >= 0 ? 'Pending Bank Deposit' : 'Excess Deposits'}</span>
+                  <div className="flex justify-between items-center text-[10px]">
+                    <span className="text-stone-500">Safe Status:</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-semibold ${
+                        dailyCashAudit.netUndepositedCashBalance > 5000
+                          ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                          : dailyCashAudit.netUndepositedCashBalance < -5000
+                          ? 'bg-indigo-100 text-indigo-900 border border-indigo-200'
+                          : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                      }`}
+                    >
+                      {dailyCashAudit.netUndepositedCashBalance > 5000
+                        ? 'Cash in Safe (To Bank)'
+                        : dailyCashAudit.netUndepositedCashBalance < -5000
+                        ? 'Bank Deposits Exceed Cash'
+                        : 'Reconciled Normal Float'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -744,6 +948,33 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                 <strong className="text-stone-900">MoR Examination Status: </strong>
                 <span>{dailyCashAudit.auditorGuidance}</span>
               </div>
+            </div>
+
+            {/* Advice as a Friend Spotlight Callout */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border border-emerald-200/90 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <HeartHandshake className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-emerald-950">Advice as a Friend: What To Do Right Now</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-200/80 text-emerald-800 uppercase tracking-wide">
+                      Accountant Tip
+                    </span>
+                  </div>
+                  <p className="text-emerald-900 text-xs mt-0.5 font-medium leading-relaxed">
+                    {dailyCashAudit.friendlyAdvice.summaryMessage}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveEngineTab('daily_cash')}
+                className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 self-start sm:self-auto cursor-pointer shadow-2xs"
+              >
+                <span>Read Friendly Advice</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         </div>
@@ -862,7 +1093,7 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
               </div>
 
               <div className="p-3.5 rounded-xl bg-white border border-stone-200 space-y-1">
-                <span className="text-stone-500 font-medium">3. Net Cash to Deposit Up to Date</span>
+                <span className="text-stone-500 font-medium">3. Net Cash from Operations (To Deposit)</span>
                 <div className="text-lg font-bold text-orange-700 font-tabular">
                   {formatCurrency(dailyCashAudit.netCashRequiredToBeDeposited, settings.currencySymbol)}
                 </div>
@@ -873,17 +1104,19 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
               </div>
 
               <div className="p-3.5 rounded-xl bg-white border border-stone-200 space-y-1">
-                <span className="text-stone-500 font-medium">4. Actual Bank Deposits &amp; Cash on Hand</span>
+                <span className="text-stone-500 font-medium">4. Actual Banked &amp; Cash in Safe</span>
                 <div className="text-lg font-bold text-emerald-800 font-tabular">
                   {formatCurrency(dailyCashAudit.totalActualBankDeposits, settings.currencySymbol)}
                 </div>
                 <div className="text-[11px] text-stone-600 pt-1 border-t border-stone-100 flex justify-between">
-                  <span>Undeposited Cash:</span>
+                  <span>Cash in Safe/Drawer:</span>
                   <span
                     className={`font-bold font-tabular ${
-                      dailyCashAudit.netUndepositedCashBalance > 5000
+                      Math.abs(dailyCashAudit.netUndepositedCashBalance) <= 5000
+                        ? 'text-emerald-700'
+                        : dailyCashAudit.netUndepositedCashBalance > 5000
                         ? 'text-amber-800'
-                        : 'text-emerald-700'
+                        : 'text-indigo-700'
                     }`}
                   >
                     {formatCurrency(dailyCashAudit.netUndepositedCashBalance, settings.currencySymbol)}
@@ -891,6 +1124,273 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Advice as a Friend: What You Should Do Right Now */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-50/80 via-teal-50/40 to-white border border-emerald-200/90 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-emerald-200/70">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <HeartHandshake className="w-5 h-5 text-emerald-100" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-900 rounded uppercase tracking-wider">
+                      Practical Guidance &middot; Advice as a Friend
+                    </span>
+                    <span className="text-[11px] text-stone-500 font-medium">
+                      Friendly Accountant Consultation
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold text-stone-900 mt-0.5">
+                    {dailyCashAudit.friendlyAdvice.headline}
+                  </h3>
+                  <p className="text-xs text-stone-600">
+                    {dailyCashAudit.friendlyAdvice.subheadline}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  onClick={() => setIsFriendlyAdviceOpen(!isFriendlyAdviceOpen)}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-900 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition"
+                >
+                  <Lightbulb className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{isFriendlyAdviceOpen ? 'Collapse Advice' : 'Expand Advice (4 Tips)'}</span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-emerald-700 transition-transform ${
+                      isFriendlyAdviceOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Top Priority Highlight Callout */}
+            <div className="p-3.5 rounded-xl bg-white border border-emerald-200 flex items-start gap-2.5 text-xs text-stone-700 shadow-2xs">
+              <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <strong className="text-emerald-950 font-bold">Accountant&apos;s Immediate Priority: </strong>
+                <span className="text-stone-800">{dailyCashAudit.friendlyAdvice.summaryMessage}</span>
+              </div>
+            </div>
+
+            {/* Advice Grid Cards */}
+            {isFriendlyAdviceOpen && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {dailyCashAudit.friendlyAdvice.items.map((item) => {
+                  const isHighUrgency = item.urgency === 'high';
+                  const isGoodNews = item.urgency === 'good_news';
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-4 rounded-xl border flex flex-col justify-between space-y-3 transition ${
+                        isHighUrgency
+                          ? 'bg-rose-50/40 border-rose-200'
+                          : isGoodNews
+                          ? 'bg-emerald-50/40 border-emerald-200'
+                          : 'bg-white border-stone-200'
+                      }`}
+                    >
+                      <div className="space-y-2.5">
+                        {/* Card Header & Urgency Badge */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2.5">
+                            <span
+                              className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                isHighUrgency
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : isGoodNews
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {item.category === 'cash_in_safe' && <Wallet className="w-4 h-4" />}
+                              {item.category === 'bank_surplus' && <Landmark className="w-4 h-4" />}
+                              {item.category === 'cash_limit' && <Scale className="w-4 h-4" />}
+                              {item.category === 'general' &&
+                                (item.icon === 'receipt' ? (
+                                  <FileText className="w-4 h-4" />
+                                ) : (
+                                  <ShieldCheck className="w-4 h-4" />
+                                ))}
+                            </span>
+                            <h4 className="font-bold text-xs sm:text-sm text-stone-900 leading-snug">
+                              {item.title}
+                            </h4>
+                          </div>
+
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 uppercase tracking-wide ${
+                              isHighUrgency
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : isGoodNews
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {isHighUrgency
+                              ? 'High Priority'
+                              : isGoodNews
+                              ? 'Clean & Safe'
+                              : 'Recommended Habit'}
+                          </span>
+                        </div>
+
+                        {/* Conversational Advice Text */}
+                        <p className="text-xs text-stone-700 leading-relaxed">
+                          {item.advice}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2 pt-2 border-t border-stone-100">
+                        {/* Why it Matters Context */}
+                        <div className="p-2 rounded-lg bg-stone-50 border border-stone-200/80 text-[11px] text-stone-600 flex items-start gap-1.5">
+                          <Info className="w-3.5 h-3.5 text-stone-500 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Why this matters: </strong>
+                            {item.whyItMatters}
+                          </span>
+                        </div>
+
+                        {/* Action Button */}
+                        {item.actionButton && (
+                          <div className="pt-1 flex justify-end">
+                            <button
+                              onClick={() => {
+                                if (item.actionButton?.actionType === 'record_close') {
+                                  onOpenDailyClose?.();
+                                } else if (item.actionButton?.targetTab) {
+                                  setActiveTab(item.actionButton.targetTab);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs ${
+                                isHighUrgency
+                                  ? 'bg-rose-700 hover:bg-rose-800 text-white'
+                                  : 'bg-stone-800 hover:bg-stone-900 text-white'
+                              }`}
+                            >
+                              <span>{item.actionButton.label}</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Detailed Undeposited Cash on Hand Calculation Method & Audit Guide */}
+          <div className="p-4 rounded-2xl bg-white border border-stone-200 text-xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-stone-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-sm shrink-0">
+                  Σ
+                </div>
+                <div>
+                  <h4 className="font-bold text-stone-900 text-xs sm:text-sm">
+                    Calculation Method: Undeposited Cash On Hand (Physical Safe Triangulation)
+                  </h4>
+                  <p className="text-[11px] text-stone-500">
+                    How physical cash remaining in the store safe is calculated and audited under MoR Chapter 6
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCashFormulaOpen(!isCashFormulaOpen)}
+                className="px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer self-start sm:self-auto shrink-0"
+              >
+                <span>{isCashFormulaOpen ? 'Hide Explanation Guide' : 'Explain How This is Calculated'}</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${isCashFormulaOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </div>
+
+            {/* Step-by-Step Formula Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-center text-xs">
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200">
+                <span className="text-[10px] text-emerald-800 font-semibold block uppercase">1. Cash Sales</span>
+                <span className="font-bold text-emerald-900 font-tabular text-sm mt-0.5 block">
+                  +{formatCurrency(dailyCashAudit.grandCashSales, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-emerald-700">Cash received from sales</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200">
+                <span className="text-[10px] text-amber-800 font-semibold block uppercase">2. Cash Purchases</span>
+                <span className="font-bold text-amber-900 font-tabular text-sm mt-0.5 block">
+                  -{formatCurrency(dailyCashAudit.grandCashPurchases, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-amber-700">Cash spent on goods/petty cash</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-orange-50 border border-orange-200">
+                <span className="text-[10px] text-orange-800 font-semibold block uppercase">3. Net Cash to Bank</span>
+                <span className="font-bold text-orange-900 font-tabular text-sm mt-0.5 block">
+                  ={formatCurrency(dailyCashAudit.netCashRequiredToBeDeposited, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-orange-700">Net cash generated to deposit</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200">
+                <span className="text-[10px] text-blue-800 font-semibold block uppercase">4. Bank Deposits</span>
+                <span className="font-bold text-blue-900 font-tabular text-sm mt-0.5 block">
+                  -{formatCurrency(dailyCashAudit.totalActualBankDeposits, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-blue-700">Sales deposits into bank</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-stone-900 text-white shadow-xs">
+                <span className="text-[10px] text-amber-300 font-semibold block uppercase">5. Cash in Safe/Drawer</span>
+                <span className="font-bold text-amber-300 font-tabular text-sm mt-0.5 block">
+                  ={formatCurrency(dailyCashAudit.netUndepositedCashBalance, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-stone-300">
+                  {dailyCashAudit.netUndepositedCashBalance >= 0 ? 'Physical cash in safe' : 'Bank deposit surplus'}
+                </span>
+              </div>
+            </div>
+
+            {/* Expandable Interpretation Guide */}
+            {isCashFormulaOpen && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-2 border-t border-stone-100 text-[11px] leading-relaxed">
+                <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                    <span className="w-2 h-2 rounded-full bg-amber-600" />
+                    <span>Positive Balance (&gt; 0 ETB): Cash in Safe</span>
+                  </div>
+                  <p className="text-amber-800">
+                    Represents physical paper money collected from sales that has not yet been taken to the bank. During an MoR tax inspection, examiners verify the cash register drawer and office safe. If this physical cash is not in the safe, auditors assess it as personal drawings or undeclared distribution.
+                  </p>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                    <span>Balanced Float (&plusmn;5,000 ETB): Reconciled</span>
+                  </div>
+                  <p className="text-emerald-800">
+                    Cash collected matches bank deposits closely. The retained balance represents normal daily retail working change (drawer float) required to operate transactions. Fully compliant with tax audit guidelines.
+                  </p>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-indigo-900">
+                    <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                    <span>Negative Balance (&lt; 0 ETB): Deposit Surplus</span>
+                  </div>
+                  <p className="text-indigo-800">
+                    Bank deposits exceed registered cash sales. Under MoR Chapter 6 Indirect Audits, examiners investigate whether: (a) customers paid directly via bank transfer, (b) owner personal savings/loans were banked, or (c) cash sales were under-reported on cash register slips.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Statutory MoR Chapter 6 Guidance Box */}
@@ -1063,9 +1563,11 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                       Actual Bank Deposits<br />
                       <span className="font-normal text-[10px] text-stone-500">(Daily / Cumulative)</span>
                     </th>
-                    <th className="py-3 px-3.5 whitespace-nowrap text-right bg-stone-50">
-                      Undeposited Cash On Hand<br />
-                      <span className="font-normal text-[10px] text-stone-500">(Cumulative Cash &minus; Bank)</span>
+                    <th className="py-3 px-3.5 whitespace-nowrap text-right bg-stone-50 border-l border-stone-200">
+                      Cash in Safe / Drawer<br />
+                      <span className="font-normal text-[10px] text-stone-500">
+                        (Undeposited Cash on Hand)
+                      </span>
                     </th>
                     <th className="py-3 px-3.5 whitespace-nowrap">MoR Audit Status</th>
                     <th className="py-3 px-3.5 text-center whitespace-nowrap">Details</th>
@@ -1185,26 +1687,34 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                               </div>
                             </td>
 
-                            {/* Undeposited Cash On Hand */}
-                            <td className="py-3 px-3.5 text-right whitespace-nowrap bg-stone-50">
+                            {/* Cash in Safe / Drawer (Undeposited Cash On Hand) */}
+                            <td className="py-3 px-3.5 text-right whitespace-nowrap bg-stone-50/80 border-l border-stone-200">
                               <div
-                                className={`font-bold font-tabular ${
-                                  Math.abs(rec.undepositedCashOnHand) < 5000
+                                className={`font-bold font-tabular text-xs ${
+                                  Math.abs(rec.undepositedCashOnHand) <= 5000
                                     ? 'text-emerald-700'
-                                    : rec.undepositedCashOnHand > 0
+                                    : rec.undepositedCashOnHand > 5000
                                     ? 'text-amber-800'
                                     : 'text-indigo-700'
                                 }`}
                               >
                                 {formatCurrency(rec.undepositedCashOnHand, settings.currencySymbol)}
                               </div>
-                              <span className="text-[10px] text-stone-500 block">
-                                {rec.undepositedCashOnHand > 0
-                                  ? 'In Vault / Drawer'
-                                  : rec.undepositedCashOnHand < 0
-                                  ? 'Excess Deposit'
-                                  : 'Balanced'}
-                              </span>
+                              <div className="mt-0.5">
+                                {rec.cashOnHandStatus === 'in_safe_pending_deposit' ? (
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                                    In Safe (To Bank)
+                                  </span>
+                                ) : rec.cashOnHandStatus === 'excess_bank_deposit' ? (
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                    Deposit Surplus
+                                  </span>
+                                ) : (
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    Reconciled Float
+                                  </span>
+                                )}
+                              </div>
                             </td>
 
                             {/* MoR Audit Status */}
@@ -1277,6 +1787,17 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                                     </span>
                                   </div>
 
+                                  {/* Friend's Daily Tip */}
+                                  {rec.friendlyTip && (
+                                    <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex items-start gap-2 text-xs text-emerald-950 shadow-2xs">
+                                      <HeartHandshake className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                                      <div>
+                                        <strong className="font-bold text-emerald-900">Advice as a Friend for {rec.dayOfWeek}: </strong>
+                                        <span className="text-emerald-800">{rec.friendlyTip}</span>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   {/* Findings List */}
                                   {rec.findings.length > 0 && (
                                     <div className="space-y-1">
@@ -1291,6 +1812,51 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                                       ))}
                                     </div>
                                   )}
+
+                                  {/* Step-by-Step Cash On Hand Calculation Box */}
+                                  <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs font-bold text-amber-950">
+                                      <span>Safe Vault &amp; Bank Reconciliation Math &middot; {formatDate(rec.date)}</span>
+                                      <span className="font-mono text-[11px] text-amber-900 font-semibold">
+                                        {rec.cashOnHandStatus === 'in_safe_pending_deposit'
+                                          ? '🟡 In Safe (Pending Bank Deposit)'
+                                          : rec.cashOnHandStatus === 'excess_bank_deposit'
+                                          ? '🔵 Bank Deposit Surplus'
+                                          : '🟢 Reconciled Normal Float'}
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-[11px] bg-white p-2.5 rounded-lg border border-amber-100 font-mono">
+                                      <div>
+                                        <span className="text-stone-400 block text-[9px] uppercase">Cash Sales Today</span>
+                                        <span className="text-emerald-700 font-bold font-tabular">+{formatCurrency(rec.cashSales)}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-stone-400 block text-[9px] uppercase">Cash Purchases</span>
+                                        <span className="text-amber-800 font-bold font-tabular">-{formatCurrency(rec.cashPurchases)}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-stone-400 block text-[9px] uppercase">Net Cash Today</span>
+                                        <span className="text-stone-800 font-bold font-tabular">={formatCurrency(rec.dailyCashToDeposit)}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-stone-400 block text-[9px] uppercase">Prior Net Total</span>
+                                        <span className="text-stone-600 font-medium font-tabular">+{formatCurrency(rec.priorCumulativeCashToDeposit)}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-stone-400 block text-[9px] uppercase">Cumulative Banked</span>
+                                        <span className="text-blue-700 font-bold font-tabular">-{formatCurrency(rec.cumulativeBankDeposits)}</span>
+                                      </div>
+                                      <div className="border-l border-amber-200 pl-2">
+                                        <span className="text-stone-400 block text-[9px] uppercase">Cash in Safe Today</span>
+                                        <span className={`font-bold font-tabular ${rec.undepositedCashOnHand >= 0 ? 'text-amber-900' : 'text-indigo-800'}`}>
+                                          ={formatCurrency(rec.undepositedCashOnHand)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <p className="text-[11px] text-stone-600 leading-normal">
+                                      <strong>MoR Chapter 6 Principle:</strong> {rec.cashOnHandExplanation}
+                                    </p>
+                                  </div>
 
                                   {/* 3 Column Day Grid: Sales, Purchases, Bank */}
                                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
@@ -1412,6 +1978,536 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
                         </React.Fragment>
                       );
                     })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== TAB: BANK REASON & CATEGORY AUDIT ===================== */}
+      {activeEngineTab === 'bank_reason_category' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-200">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-blue-100 text-blue-800 rounded border border-blue-200 uppercase tracking-wider">
+                    MoR Chapter 6 Bank Deposit Method
+                  </span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded border border-amber-200 uppercase tracking-wider">
+                    Proc. No. 979/2016 Art. 17 &amp; 27
+                  </span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold text-stone-900 tracking-tight">
+                  Bank Reason &amp; Category Forensic Examination
+                </h2>
+                <p className="text-xs text-stone-600 max-w-3xl leading-relaxed">
+                  Scrutinizes bank transaction payment reasons, narratives, and categories under Ministry of Revenues (MoR) Indirect Audit Directives. Reconciles business sales deposits, isolates verified non-taxable receipts (equity injections, loans, inter-bank transfers), and disallows personal drawings disguised as business expenses.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => exportBankAuditFindingsCSV(bankReasonAudit.findings)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer whitespace-nowrap"
+                  title="Export complete bank audit findings with legal citations to CSV"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Export Bank Audit CSV</span>
+                </button>
+
+                <button
+                  onClick={handlePrintDossier}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold border border-stone-300 transition cursor-pointer whitespace-nowrap"
+                >
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span>Print Paper</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5 KPI Metric Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+              {/* Inflows Audited */}
+              <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-1">
+                <span className="text-stone-500 block text-[11px] font-medium">Total Bank Deposits</span>
+                <span className="text-base font-bold text-stone-900 font-tabular block">
+                  {formatCurrency(bankReasonAudit.totalBankCredits, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-stone-500 block">
+                  {bankTransactions.filter((t) => t.type === 'credit').length} credit transactions
+                </span>
+              </div>
+
+              {/* Verified Non-Income */}
+              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+                <span className="text-emerald-800 block text-[11px] font-medium">Verified Non-Taxable</span>
+                <span className="text-base font-bold text-emerald-700 font-tabular block">
+                  {formatCurrency(bankReasonAudit.verifiedNonTaxableInflows, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-emerald-700 block">
+                  Equity, Loans &amp; Transfers isolated
+                </span>
+              </div>
+
+              {/* Unexplained Deposits */}
+              <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-1">
+                <span className="text-rose-800 block text-[11px] font-medium">Unexplained Deposits</span>
+                <span
+                  className={`text-base font-bold font-tabular block ${
+                    bankReasonAudit.unexplainedDepositsAmount > 0 ? 'text-rose-700' : 'text-stone-900'
+                  }`}
+                >
+                  {formatCurrency(bankReasonAudit.unexplainedDepositsAmount, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-rose-700 block">
+                  {bankReasonAudit.unexplainedDepositsCount} txns (MoR Deemed Sales)
+                </span>
+              </div>
+
+              {/* Disallowed Personal Drawings */}
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1">
+                <span className="text-amber-800 block text-[11px] font-medium">Art. 27 Personal Drawings</span>
+                <span
+                  className={`text-base font-bold font-tabular block ${
+                    bankReasonAudit.disallowedPersonalDrawingsAmount > 0
+                      ? 'text-amber-700'
+                      : 'text-stone-900'
+                  }`}
+                >
+                  {formatCurrency(
+                    bankReasonAudit.disallowedPersonalDrawingsAmount,
+                    settings.currencySymbol
+                  )}
+                </span>
+                <span className="text-[10px] text-amber-700 block">
+                  {bankReasonAudit.disallowedPersonalDrawingsCount} private items disallowed
+                </span>
+              </div>
+
+              {/* Total Potential Exposure */}
+              <div className="p-3.5 rounded-xl bg-purple-50/70 border border-purple-200 space-y-1 col-span-2 lg:col-span-1">
+                <span className="text-purple-800 block text-[11px] font-medium">Potential MoR Exposure</span>
+                <span
+                  className={`text-base font-bold font-tabular block ${
+                    bankReasonAudit.totalTaxRiskExposure > 0 ? 'text-purple-900' : 'text-stone-900'
+                  }`}
+                >
+                  {formatCurrency(bankReasonAudit.totalTaxRiskExposure, settings.currencySymbol)}
+                </span>
+                <span className="text-[10px] text-purple-700 block">
+                  15% VAT + CIT + 20% penalty
+                </span>
+              </div>
+            </div>
+
+            {/* Legal Articles Reference Banner */}
+            <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="space-y-0.5">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5 text-[11px]">
+                  <Scale className="w-3.5 h-3.5 text-blue-600" />
+                  Proc. No. 979/2016 Art. 17
+                </span>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  All bank deposits without verified non-income contracts/memos are presumed taxable turnover subject to 15% VAT &amp; 30% Profit Tax.
+                </p>
+              </div>
+
+              <div className="space-y-0.5">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5 text-[11px]">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  Proc. No. 979/2016 Art. 27(1)(a)
+                </span>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  Personal, domestic, or living expenses drawn from business bank accounts are strictly non-deductible and added back to taxable profits.
+                </p>
+              </div>
+
+              <div className="space-y-0.5">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5 text-[11px]">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  MoR Indirect Audit Directive Ch. 6
+                </span>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  Shareholder loan infusions and inter-bank transfers are subtracted from total bank deposits only when supported by board minutes or debit advices.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Forensic Filter & Search Toolbar */}
+          <div className="p-4 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+              {/* Search Bar */}
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={bankAuditSearch}
+                  onChange={(e) => setBankAuditSearch(e.target.value)}
+                  placeholder="Search reason memo, narrative, description, category, or legal citation..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-300 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-stone-50/50"
+                />
+                {bankAuditSearch && (
+                  <button
+                    onClick={() => setBankAuditSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 text-xs cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Reset Filters */}
+              {(bankAuditRiskFilter !== 'all' ||
+                bankAuditFlowFilter !== 'all' ||
+                bankAuditClassificationFilter !== 'all' ||
+                bankAuditSearch) && (
+                <button
+                  onClick={() => {
+                    setBankAuditSearch('');
+                    setBankAuditRiskFilter('all');
+                    setBankAuditFlowFilter('all');
+                    setBankAuditClassificationFilter('all');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold text-xs transition cursor-pointer self-start sm:self-auto shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reset Filters</span>
+                </button>
+              )}
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-stone-100 text-xs">
+              <span className="text-[11px] font-semibold text-stone-500 uppercase tracking-wider mr-1">
+                Risk Level:
+              </span>
+
+              <button
+                onClick={() => setBankAuditRiskFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditRiskFilter === 'all'
+                    ? 'bg-stone-900 text-white'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                All ({bankReasonAudit.findings.length})
+              </button>
+
+              <button
+                onClick={() => setBankAuditRiskFilter('high')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditRiskFilter === 'high'
+                    ? 'bg-rose-700 text-white'
+                    : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                }`}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                <span>High Risk ({bankReasonAudit.highRiskCount})</span>
+              </button>
+
+              <button
+                onClick={() => setBankAuditRiskFilter('medium')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditRiskFilter === 'medium'
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                }`}
+              >
+                <HelpCircle className="w-3 h-3" />
+                <span>Medium ({bankReasonAudit.mediumRiskCount})</span>
+              </button>
+
+              <button
+                onClick={() => setBankAuditRiskFilter('compliant')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditRiskFilter === 'compliant'
+                    ? 'bg-emerald-700 text-white'
+                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                }`}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Compliant ({bankReasonAudit.lowRiskCount})</span>
+              </button>
+
+              <div className="h-4 w-px bg-stone-300 mx-1 hidden sm:block" />
+
+              <span className="text-[11px] font-semibold text-stone-500 uppercase tracking-wider mr-1">
+                Flow:
+              </span>
+
+              <button
+                onClick={() => setBankAuditFlowFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditFlowFilter === 'all'
+                    ? 'bg-stone-900 text-white'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                All Flows
+              </button>
+
+              <button
+                onClick={() => setBankAuditFlowFilter('credit')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditFlowFilter === 'credit'
+                    ? 'bg-emerald-700 text-white'
+                    : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                }`}
+              >
+                <ArrowDownLeft className="w-3 h-3 text-emerald-600" />
+                <span>Deposits / Inflows</span>
+              </button>
+
+              <button
+                onClick={() => setBankAuditFlowFilter('debit')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  bankAuditFlowFilter === 'debit'
+                    ? 'bg-rose-700 text-white'
+                    : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                }`}
+              >
+                <ArrowUpRight className="w-3 h-3 text-rose-600" />
+                <span>Payments / Debits</span>
+              </button>
+
+              <div className="h-4 w-px bg-stone-300 mx-1 hidden sm:block" />
+
+              <select
+                value={bankAuditClassificationFilter}
+                onChange={(e) =>
+                  setBankAuditClassificationFilter(e.target.value as 'all' | AuditClassification)
+                }
+                className="px-2.5 py-1 rounded-lg border border-stone-300 text-xs font-semibold bg-white text-stone-800"
+              >
+                <option value="all">All Classifications</option>
+                <option value="taxable_receipt">Taxable Commercial Receipts</option>
+                <option value="non_taxable_inflow">Non-Taxable Capital / Loan</option>
+                <option value="inter_account_transfer">Inter-Account Transfers</option>
+                <option value="allowable_deduction">Allowable Business Purchases</option>
+                <option value="disallowed_personal_drawing">Art. 27 Personal Drawings</option>
+                <option value="suspicious_unexplained">Unexplained Deposits</option>
+                <option value="tax_remittance">MoR Tax Remittances</option>
+                <option value="bank_service_charge">Bank Service Fees</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Forensic Findings Table */}
+          <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-blue-600" />
+                <h3 className="font-bold text-stone-900 text-sm">
+                  Forensic Findings Ledger ({filteredBankFindings.length} of {bankReasonAudit.findings.length} transactions)
+                </h3>
+              </div>
+              <span className="text-[11px] text-stone-500 font-mono">
+                VAT Rate: {(settings.defaultSalesTaxRate * 100).toFixed(0)}% &middot; CIT: {(settings.corporateTaxRate * 100).toFixed(0)}%
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-stone-200 bg-stone-50/80 text-stone-600 uppercase text-[10px] tracking-wider font-semibold">
+                    <th className="py-2.5 px-3 whitespace-nowrap">Date &amp; Flow</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Amount (ETB)</th>
+                    <th className="py-2.5 px-3">Bank Narrative &amp; Reason / Memo</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Category</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Audit Classification</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Risk Level</th>
+                    <th className="py-2.5 px-3">MoR Legal Basis</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Tax Exposure</th>
+                    <th className="py-2.5 px-3">Auditor Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {filteredBankFindings.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-stone-500">
+                        <CheckCircle2 className="w-6 h-6 text-emerald-600 mx-auto mb-1.5" />
+                        <span className="font-medium block text-stone-800">
+                          No transactions found matching current filters.
+                        </span>
+                        <span className="text-[11px] text-stone-500">
+                          Try resetting the search or filter options above.
+                        </span>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredBankFindings.map((finding) => {
+                      const isCredit = finding.type === 'credit';
+                      return (
+                        <tr
+                          key={finding.id}
+                          className={`hover:bg-stone-50/80 transition ${
+                            finding.riskLevel === 'high'
+                              ? 'bg-rose-50/20'
+                              : finding.riskLevel === 'medium'
+                              ? 'bg-amber-50/20'
+                              : ''
+                          }`}
+                        >
+                          {/* Date & Flow */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="font-mono text-stone-800 block text-[11px]">
+                              {finding.date}
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase mt-0.5 ${
+                                isCredit
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {isCredit ? (
+                                <>
+                                  <ArrowDownLeft className="w-3 h-3 text-emerald-600" />
+                                  Credit
+                                </>
+                              ) : (
+                                <>
+                                  <ArrowUpRight className="w-3 h-3 text-rose-600" />
+                                  Debit
+                                </>
+                              )}
+                            </span>
+                          </td>
+
+                          {/* Amount */}
+                          <td className="py-3 px-3 text-right whitespace-nowrap">
+                            <span
+                              className={`font-tabular font-bold text-xs ${
+                                isCredit ? 'text-emerald-700' : 'text-stone-900'
+                              }`}
+                            >
+                              {isCredit ? '+' : '-'}
+                              {formatCurrency(finding.amount, settings.currencySymbol)}
+                            </span>
+                          </td>
+
+                          {/* Bank Narrative & Reason / Memo */}
+                          <td className="py-3 px-3 max-w-xs">
+                            <div className="font-medium text-stone-900 leading-snug">
+                              {finding.description}
+                            </div>
+                            {finding.reason && finding.reason !== finding.description && (
+                              <div className="text-[11px] text-blue-700 bg-blue-50/80 px-2 py-0.5 rounded border border-blue-100 mt-1 inline-block">
+                                <span className="font-semibold text-blue-900">Reason: </span>
+                                {finding.reason}
+                              </div>
+                            )}
+                            {(!finding.reason || finding.reason === '') && (
+                              <span className="text-[10px] text-rose-600 italic block mt-0.5">
+                                No memo / reason provided
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Category Badge */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-stone-100 text-stone-700 border border-stone-200">
+                              {finding.category}
+                            </span>
+                          </td>
+
+                          {/* Audit Classification */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            {finding.auditClassification === 'taxable_receipt' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">
+                                Taxable Sales
+                              </span>
+                            ) : finding.auditClassification === 'non_taxable_inflow' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                Capital / Loan
+                              </span>
+                            ) : finding.auditClassification === 'inter_account_transfer' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-stone-100 text-stone-800">
+                                Internal Transfer
+                              </span>
+                            ) : finding.auditClassification === 'disallowed_personal_drawing' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
+                                Disallowed (Art. 27)
+                              </span>
+                            ) : finding.auditClassification === 'suspicious_unexplained' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800">
+                                Unexplained Deposit
+                              </span>
+                            ) : finding.auditClassification === 'tax_remittance' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800">
+                                MoR Remittance
+                              </span>
+                            ) : finding.auditClassification === 'bank_service_charge' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-stone-100 text-stone-700">
+                                Bank Fee
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-stone-100 text-stone-700">
+                                Allowable Expense
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Risk Level */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            {finding.riskLevel === 'high' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 uppercase">
+                                <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                High Risk
+                              </span>
+                            ) : finding.riskLevel === 'medium' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 uppercase">
+                                <HelpCircle className="w-3 h-3 text-amber-600" />
+                                Warning
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 uppercase">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                Compliant
+                              </span>
+                            )}
+                          </td>
+
+                          {/* MoR Legal Basis */}
+                          <td className="py-3 px-3 max-w-xs">
+                            <span className="font-semibold text-stone-900 block text-[11px]">
+                              {finding.findingTitle}
+                            </span>
+                            <span className="text-[10px] text-stone-600 block mt-0.5">
+                              {finding.proclamationArticle}
+                            </span>
+                          </td>
+
+                          {/* Tax Exposure */}
+                          <td className="py-3 px-3 text-right whitespace-nowrap">
+                            {finding.potentialTaxExposure > 0 ? (
+                              <span className="font-tabular font-bold text-xs text-rose-700">
+                                {formatCurrency(
+                                  finding.potentialTaxExposure,
+                                  settings.currencySymbol
+                                )}
+                              </span>
+                            ) : (
+                              <span className="font-tabular text-stone-400 text-xs">
+                                0.00
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Recommended Action */}
+                          <td className="py-3 px-3 max-w-xs">
+                            <span className="text-[11px] text-stone-700 leading-tight block">
+                              {finding.recommendedAction}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1569,6 +2665,20 @@ export const TaxAuditEngine: React.FC<TaxAuditEngineProps> = ({
             <p className="text-xs text-stone-600 p-3 rounded-xl bg-stone-50 border border-stone-200 leading-relaxed">
               <strong>Auditor Assessment:</strong> {bankDepositAnalysis.auditorNotes}
             </p>
+
+            <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-stone-100 text-xs">
+              <span className="text-stone-500">
+                MoR auditors require forensic reason and category verification to justify non-taxable exclusions.
+              </span>
+              <button
+                onClick={() => setActiveEngineTab('bank_reason_category')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200 font-semibold cursor-pointer self-start sm:self-auto shrink-0"
+              >
+                <Landmark className="w-3.5 h-3.5 text-blue-600" />
+                <span>Forensic Reason &amp; Category Audit ({bankReasonAudit.findings.length} Txns)</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Method 2: Markup & Gross Profit Margin Test */}

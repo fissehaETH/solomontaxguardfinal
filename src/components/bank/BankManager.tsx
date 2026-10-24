@@ -112,6 +112,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [targetBankId, setTargetBankId] = useState(bankAccounts[0]?.id || '');
   const [txDate, setTxDate] = useState(today);
   const [description, setDescription] = useState('');
+  const [reason, setReason] = useState('');
   const [amount, setAmount] = useState(0);
   const [txType, setTxType] = useState<'credit' | 'debit'>('credit');
   const [txCategory, setTxCategory] = useState<BankTransaction['category']>('sales_cash_deposit');
@@ -160,6 +161,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setTargetBankId(bankAccounts[0]?.id || '');
     setTxDate(today);
     setDescription('');
+    setReason('');
     setAmount(0);
     setTxType('credit');
     setTxCategory('sales_cash_deposit');
@@ -172,6 +174,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setTargetBankId(bankAccounts[0]?.id || '');
     setTxDate(today);
     setDescription('Sales cash deposited into bank account');
+    setReason('Daily store sales cash register deposit');
     setAmount(0);
     setTxType('credit');
     setTxCategory('sales_cash_deposit');
@@ -184,6 +187,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setTargetBankId(bankAccounts[0]?.id || '');
     setTxDate(today);
     setDescription('Cash withdrawal from bank account');
+    setReason('Petty cash withdrawal for store operations');
     setAmount(0);
     setTxType('debit');
     setTxCategory('cash_withdraw');
@@ -196,6 +200,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setTargetBankId(tx.bankAccountId);
     setTxDate(tx.date);
     setDescription(tx.description);
+    setReason(tx.reason || tx.description);
     setAmount(tx.amount);
     setTxType(tx.type);
     setTxCategory(tx.category);
@@ -266,6 +271,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
       bankAccountId: targetBankId,
       date: txDate,
       description: description.trim() || 'Bank Entry',
+      reason: reason.trim() || description.trim() || 'Bank Entry',
       type: txType,
       amount,
       category: txCategory,
@@ -693,6 +699,12 @@ export const BankManager: React.FC<BankManagerProps> = ({
                           </span>
                         </div>
                         <h4 className="text-sm font-bold text-stone-900 mt-1">{tx.description}</h4>
+                        {tx.reason && tx.reason !== tx.description && (
+                          <p className="text-xs text-stone-600 mt-0.5 flex items-center gap-1">
+                            <span className="font-semibold text-stone-700">Reason/Memo:</span>
+                            <span className="font-mono text-stone-800">{tx.reason}</span>
+                          </p>
+                        )}
                       </div>
 
                       <div className="text-right shrink-0">
@@ -807,6 +819,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <input
                 type="text"
                 maxLength={4}
+                inputMode="numeric"
                 placeholder="e.g. 4920"
                 value={accNumberMasked}
                 onChange={(e) => setAccNumberMasked(e.target.value)}
@@ -834,6 +847,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <input
                 type="number"
                 step="0.01"
+                min="0"
+                inputMode="decimal"
                 required
                 placeholder="0.00"
                 value={openingBalance || ''}
@@ -928,15 +943,29 @@ export const BankManager: React.FC<BankManagerProps> = ({
           </div>
 
           <div>
-            <span className="text-xs text-stone-600">What is this bank entry for?</span>
+            <span className="text-xs text-stone-600">What is this bank entry for? (Description)</span>
             <input
               type="text"
               required
-              placeholder="e.g. Sales cash deposited at CBE branch or cash withdrawal for shop"
+              placeholder="e.g. Sales cash deposited at CBE branch or payment to supplier"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
             />
+          </div>
+
+          <div>
+            <span className="text-xs font-semibold text-stone-700">Bank Statement Payment Reason / Narrative Memo</span>
+            <input
+              type="text"
+              placeholder="e.g. CBE RTGS Inv #4820, Director Loan Infusion, Store Daily Cash Deposit, or School Fee"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
+            />
+            <p className="text-[10px] text-stone-500 mt-1">
+              MoR tax auditors examine bank reasons to separate non-taxable loans/capital from taxable revenue, and disallow personal drawings under Art. 27.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -946,6 +975,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
                 type="number"
                 step="0.01"
                 min="0.01"
+                inputMode="decimal"
                 required
                 placeholder="0.00"
                 value={amount || ''}
@@ -955,7 +985,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </div>
 
             <div>
-              <span className="text-xs font-semibold text-stone-700">Reason / Category</span>
+              <span className="text-xs font-semibold text-stone-700">Tax Audit Category</span>
               <select
                 value={txCategory}
                 onChange={(e) => {
@@ -965,13 +995,15 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     val === 'cash_withdraw' ||
                     val === 'vendor_payout' ||
                     val === 'tax_payment' ||
-                    val === 'bank_fee'
+                    val === 'bank_fee' ||
+                    val === 'personal_drawing'
                   ) {
                     setTxType('debit');
                   } else if (
                     val === 'sales_cash_deposit' ||
                     val === 'sale_deposit' ||
-                    val === 'card_settlement'
+                    val === 'card_settlement' ||
+                    val === 'loan_infusion'
                   ) {
                     setTxType('credit');
                   }
@@ -982,14 +1014,16 @@ export const BankManager: React.FC<BankManagerProps> = ({
                   <option value="sales_cash_deposit">Sales Cash Deposit (የሽያጭ ጥሬ ገንዘብ ባንክ ገቢ)</option>
                   <option value="sale_deposit">Sales Transfer / Electronic Deposit (የሽያጭ ባንክ ዝውውር)</option>
                   <option value="card_settlement">Card / POS / Telebirr Settlement</option>
+                  <option value="loan_infusion">Capital / Shareholder Loan (Non-Taxable Inflow)</option>
                   <option value="transfer">Account Transfer In</option>
-                  <option value="other">Other Bank Deposit</option>
+                  <option value="other">Other Bank Deposit (Audit Scrutiny)</option>
                 </optgroup>
                 <optgroup label="Bank Withdrawals & Payments (Money Out · ወጪ)">
+                  <option value="vendor_payout">Paid to Supplier / Vendor (Deductible Business)</option>
+                  <option value="personal_drawing">Personal Drawing / Owner Private (Non-Deductible Art. 27)</option>
                   <option value="cash_withdraw">Cash Withdraw (ጥሬ ገንዘብ ወጪ)</option>
-                  <option value="vendor_payout">Paid to Supplier / Vendor</option>
                   <option value="tax_payment">Tax Paid to Government (15% VAT / Profit Tax)</option>
-                  <option value="bank_fee">Bank Service Charge / Fee</option>
+                  <option value="bank_fee">Bank Service Charge / Fee (Deductible)</option>
                   <option value="other">Other Withdrawal / Expense</option>
                 </optgroup>
               </select>
@@ -1069,6 +1103,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
               type="number"
               step="0.01"
               min="0.01"
+              inputMode="decimal"
               required
               placeholder="e.g. 25000.00"
               value={transferAmount || ''}

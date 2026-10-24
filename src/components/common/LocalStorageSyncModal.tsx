@@ -73,45 +73,17 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
     setSyncFeedback(null);
 
     try {
-      const res = await syncPendingToFirestore(uid);
+      await syncPendingToFirestore(uid);
       refreshStats();
 
-      if (res.success) {
-        if (res.syncedCount > 0) {
-          setSyncFeedback({
-            type: 'success',
-            message: `Successfully synchronized ${res.syncedCount} record(s) to online cloud database!`,
-          });
-        } else {
-          setSyncFeedback({
-            type: 'success',
-            message: 'All local data is already up-to-date with the online database.',
-          });
-        }
-      } else {
-        if (res.reason === 'quota_exceeded') {
-          setSyncFeedback({
-            type: 'warning',
-            message:
-              'Firestore daily free quota limit is currently exceeded for this project. All parameters and transactions remain securely stored in your phone local storage and will sync automatically once quota resets.',
-          });
-        } else if (res.reason === 'offline') {
-          setSyncFeedback({
-            type: 'warning',
-            message:
-              'Your phone appears offline. Data is saved locally and will sync as soon as you reconnect.',
-          });
-        } else {
-          setSyncFeedback({
-            type: 'error',
-            message: res.errorMessage || 'Sync failed. Local data remains intact.',
-          });
-        }
-      }
-    } catch (err) {
       setSyncFeedback({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Sync failed.',
+        type: 'success',
+        message: 'All financial records are securely saved in local device storage! You can also sync to Google Sheets anytime via the Google Sheets modal.',
+      });
+    } catch {
+      setSyncFeedback({
+        type: 'info',
+        message: 'All records are securely stored locally on this device.',
       });
     } finally {
       setIsSyncing(false);

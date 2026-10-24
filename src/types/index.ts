@@ -81,6 +81,7 @@ export interface BankTransaction {
   bankAccountId: string;
   date: string;
   description: string;
+  reason?: string; // Explicit bank transaction reason / payment purpose / narrative memo
   type: 'credit' | 'debit';
   amount: number;
   category:
@@ -92,6 +93,8 @@ export interface BankTransaction {
     | 'tax_payment'
     | 'bank_fee'
     | 'transfer'
+    | 'personal_drawing'
+    | 'loan_infusion'
     | 'other';
   referenceId?: string; // Sale ID or Purchase ID
   isReconciled: boolean;
@@ -124,6 +127,12 @@ export interface TaxSettings {
   defaultSalesTaxRate: number; // e.g. 0.10 for 10%
   corporateTaxRate: number; // e.g. 0.20 for 20%
   fiscalYearStartMonth: number; // 1 for January
+  googleSheetId?: string;
+  googleSheetUrl?: string;
+  googleSheetName?: string;
+  lastGoogleSheetSyncAt?: string;
+  googleAppsScriptUrl?: string;
+  googleSyncMethod?: 'appscript';
 }
 
 export interface AuditDiagnosticItem {

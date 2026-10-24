@@ -84,15 +84,31 @@ export const SECTOR_BENCHMARKS: SectorBenchmark[] = [
   },
 ];
 
-// --- 1. Indirect Audit Method: Bank Deposit Analysis ---
+// --- 1. Indirect Audit Method: Bank Deposit Analysis (Considering Reason & Category) ---
+export interface BankDepositCategoryItem {
+  category: BankTransaction['category'];
+  label: string;
+  type: 'credit' | 'debit';
+  count: number;
+  amount: number;
+  taxTreatment: string;
+  isTaxableSalesDeposit: boolean;
+  isExemptOrNonIncome: boolean;
+  riskLevel: 'compliant' | 'warning' | 'high_risk';
+}
+
 export interface BankDepositAnalysisResult {
   totalBankDeposits: number;
-  identifiedNonIncomeDeposits: number; // transfers, loans, owner equity
+  identifiedNonIncomeDeposits: number; // transfers, loans, owner equity verified by reason/category
+  verifiedSalesDeposits: number; // deposits verified as sales
+  unexplainedDeposits: number; // deposits with vague or missing reason/category
   netBusinessBankDeposits: number;
   reportedBookSales: number;
   unexplainedVariance: number; // netBusinessBankDeposits - reportedBookSales
   riskStatus: 'low_risk' | 'moderate_risk' | 'high_audit_flag';
   auditorNotes: string;
+  categoryBreakdown: BankDepositCategoryItem[];
+  reasonAuditDiscrepanciesCount: number;
 }
 
 export function calculateBankDepositAnalysis(
@@ -103,16 +119,156 @@ export function calculateBankDepositAnalysis(
   const creditTxs = bankTransactions.filter((tx) => tx.type === 'credit');
   const totalBankDeposits = creditTxs.reduce((sum, tx) => sum + tx.amount, 0);
 
-  // Non-income deposits: transfers between own accounts, owner loans, or capital
-  const nonIncomeTxs = creditTxs.filter(
-    (tx) => tx.category === 'transfer' || tx.notes?.toLowerCase().includes('loan') || tx.notes?.toLowerCase().includes('capital')
-  );
-  const identifiedNonIncomeDeposits = nonIncomeTxs.reduce((sum, tx) => sum + tx.amount, 0);
+  let verifiedSalesDeposits = 0;
+  let identifiedNonIncomeDeposits = 0;
+  let unexplainedDeposits = 0;
+  let reasonAuditDiscrepanciesCount = 0;
+
+  // Breakdown by Category map
+  const categoryMap: Record<
+    string,
+    {
+      count: number;
+      amount: number;
+      category: BankTransaction['category'];
+      label: string;
+      taxTreatment: string;
+      isTaxableSalesDeposit: boolean;
+      isExemptOrNonIncome: boolean;
+      riskLevel: 'compliant' | 'warning' | 'high_risk';
+    }
+  > = {};
+
+  creditTxs.forEach((tx) => {
+    const rawReason = (tx.reason || tx.description || '').toLowerCase();
+    const rawNotes = (tx.notes || '').toLowerCase();
+    const fullText = `${rawReason} ${rawNotes}`;
+
+    // Test for loan or capital keywords in reason/memo
+    const isLoanOrCapitalReason =
+      /(?:shareholder\s*loan|director\s*loan|capital\s*injection|capital\s*deposit|equity|owner\s*funds?|bank\s*loan|term\s*loan|infusion)/i.test(
+        fullText
+      );
+
+    // Test for transfer keywords
+    const isTransferReason =
+      /(?:transfer\s*from|internal\s*transfer|contra|own\s*account|tax\s*reserve|escrow)/i.test(
+        fullText
+      );
+
+    // Test for sales keywords in reason
+    const isSalesReason =
+      /(?:sale|invoice|customer|payment\s*for|pos\s*settlement|daily\s*cash|telebirr\s*merchant|store)/i.test(
+        fullText
+      );
+
+    let isNonIncome = false;
+    let isSales = false;
+    let isUnexplained = false;
+
+    if (tx.category === 'loan_infusion' || isLoanOrCapitalReason) {
+      isNonIncome = true;
+      identifiedNonIncomeDeposits += tx.amount;
+    } else if (tx.category === 'transfer' || isTransferReason) {
+      // If tagged as transfer but reason explicitly states it's customer payment for sales:
+      if (isSalesReason) {
+        reasonAuditDiscrepanciesCount += 1;
+        isSales = true;
+        verifiedSalesDeposits += tx.amount;
+      } else {
+        isNonIncome = true;
+        identifiedNonIncomeDeposits += tx.amount;
+      }
+    } else if (
+      tx.category === 'sale_deposit' ||
+      tx.category === 'sales_cash_deposit' ||
+      tx.category === 'card_settlement' ||
+      isSalesReason
+    ) {
+      isSales = true;
+      verifiedSalesDeposits += tx.amount;
+    } else {
+      // Category is other or undefined
+      if (isLoanOrCapitalReason || isTransferReason) {
+        isNonIncome = true;
+        identifiedNonIncomeDeposits += tx.amount;
+      } else {
+        isUnexplained = true;
+        unexplainedDeposits += tx.amount;
+        if (tx.amount > 5000) reasonAuditDiscrepanciesCount += 1;
+      }
+    }
+
+    // Accumulate category map
+    const catKey = tx.category || 'other';
+    if (!categoryMap[catKey]) {
+      let label = 'Other Bank Deposit';
+      let taxTreatment = 'Unexplained Inflow (MoR Assesses as Taxable Sales)';
+      let riskLevel: 'compliant' | 'warning' | 'high_risk' = 'warning';
+
+      switch (catKey) {
+        case 'sale_deposit':
+          label = 'Sales Transfer Deposit';
+          taxTreatment = 'Taxable Operating Sales Revenue (Subject to 15% VAT & Profit Tax)';
+          riskLevel = 'compliant';
+          break;
+        case 'sales_cash_deposit':
+          label = 'Store Cash Register Deposit';
+          taxTreatment = 'Taxable Operating Sales Revenue (Cross-checked against daily register)';
+          riskLevel = 'compliant';
+          break;
+        case 'card_settlement':
+          label = 'POS & Telebirr Settlements';
+          taxTreatment = 'Taxable Operating Sales Revenue (Electronic merchant credits)';
+          riskLevel = 'compliant';
+          break;
+        case 'loan_infusion':
+          label = 'Capital & Shareholder Loan Infusion';
+          taxTreatment = 'Non-Taxable Capital Inflow (Must have loan contract / board resolution)';
+          riskLevel = 'compliant';
+          break;
+        case 'transfer':
+          label = 'Inter-Account Transfer';
+          taxTreatment = 'Non-Taxable Internal Transfer (Contra movement)';
+          riskLevel = 'compliant';
+          break;
+        case 'personal_drawing':
+          label = 'Owner Personal Deposit';
+          taxTreatment = 'Non-Taxable Capital Return (Auditor verifies private source)';
+          riskLevel = 'warning';
+          break;
+        default:
+          label = 'Unclassified Bank Deposit';
+          taxTreatment = 'High Audit Risk (Presumed undeclared sales under MoR Manual Ch. 6)';
+          riskLevel = 'high_risk';
+          break;
+      }
+
+      categoryMap[catKey] = {
+        category: catKey,
+        label,
+        count: 0,
+        amount: 0,
+        taxTreatment,
+        isTaxableSalesDeposit: isSales,
+        isExemptOrNonIncome: isNonIncome,
+        riskLevel,
+      };
+    }
+
+    categoryMap[catKey].count += 1;
+    categoryMap[catKey].amount += tx.amount;
+  });
+
+  const categoryBreakdown: BankDepositCategoryItem[] = Object.values(categoryMap).map((item) => ({
+    ...item,
+    type: 'credit' as const,
+  }));
 
   const netBusinessBankDeposits = Math.max(0, totalBankDeposits - identifiedNonIncomeDeposits);
   const reportedBookSales = sales.reduce((sum, s) => sum + s.totalAmount, 0);
 
-  // Variance: If bank deposits exceed reported sales, MoR auditor treats excess as undeclared sales
+  // Variance: If net business deposits exceed reported book sales, MoR treats excess as undeclared sales
   const unexplainedVariance = netBusinessBankDeposits - reportedBookSales;
 
   let riskStatus: 'low_risk' | 'moderate_risk' | 'high_audit_flag' = 'low_risk';
@@ -120,23 +276,27 @@ export function calculateBankDepositAnalysis(
 
   if (unexplainedVariance > 5000) {
     riskStatus = 'high_audit_flag';
-    auditorNotes = `MoR Bank Deposit Test Flag: Total bank deposits exceed reported sales by ETB ${unexplainedVariance.toLocaleString(undefined, { minimumFractionDigits: 2 })}. Under Chapter 6 of the MoR Tax Audit Manual, auditors will assess this discrepancy as undeclared taxable sales subject to 15% VAT and 30% profit tax plus understatement penalties.`;
+    auditorNotes = `MoR Bank Deposit Test Flag: Net business bank deposits (ETB ${netBusinessBankDeposits.toLocaleString(undefined, { minimumFractionDigits: 2 })}) exceed reported sales (ETB ${reportedBookSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}) by ETB ${unexplainedVariance.toLocaleString(undefined, { minimumFractionDigits: 2 })}. After considering bank Reason and Category, ETB ${identifiedNonIncomeDeposits.toLocaleString(undefined, { minimumFractionDigits: 2 })} was recognized as non-taxable loans/transfers. The remaining discrepancy of ETB ${unexplainedVariance.toLocaleString(undefined, { minimumFractionDigits: 2 })} is flagged by MoR auditors under Chapter 6 as undeclared taxable sales subject to 15% VAT and 30% profit tax plus understatement penalties.`;
   } else if (unexplainedVariance < -20000 && reportedBookSales > 0) {
     riskStatus = 'moderate_risk';
-    auditorNotes = `Reported sales exceed bank deposits by ETB ${Math.abs(unexplainedVariance).toLocaleString(undefined, { minimumFractionDigits: 2 })}. Auditors will verify physical cash receipts, cash register Z-reports, and examine whether cash was retained in hand or paid out directly for purchases.`;
+    auditorNotes = `Reported sales exceed verified bank deposits by ETB ${Math.abs(unexplainedVariance).toLocaleString(undefined, { minimumFractionDigits: 2 })}. Auditors will verify cash register Z-reports and examine whether customer cash was retained in hand or paid out directly for cash purchases.`;
   } else {
     riskStatus = 'low_risk';
-    auditorNotes = 'Bank deposits align closely with recorded sales and account transfers. High compliance with MoR reconciliation standards.';
+    auditorNotes = `Bank deposits and stated reasons/categories align closely with recorded sales books. Identified non-income deposits (ETB ${identifiedNonIncomeDeposits.toLocaleString(undefined, { minimumFractionDigits: 2 })}) are cleanly accounted for. High compliance with MoR reconciliation standards.`;
   }
 
   return {
     totalBankDeposits,
     identifiedNonIncomeDeposits,
+    verifiedSalesDeposits,
+    unexplainedDeposits,
     netBusinessBankDeposits,
     reportedBookSales,
     unexplainedVariance,
     riskStatus,
     auditorNotes,
+    categoryBreakdown,
+    reasonAuditDiscrepanciesCount,
   };
 }
 
@@ -459,17 +619,463 @@ export function evaluateMoRChecklist(
         : `${unreconciledTx.length} bank entry(ies) remain unreconciled. Complete bank reconciliation to prevent auditor assessment.`,
   });
 
-  // 6. Statutory 6-Year Records Preservation Requirement
+  // 7. Bank Payment Reason & Category Forensic Audit
+  const bankReasonAudit = auditBankReasonAndCategory(bankTransactions, purchases, sales);
   items.push({
-    id: 'mor-records-retention',
-    category: 'RECORDS_RETENTION',
-    legalRef: 'Tax Administration Proc. No. 983/2016 Art. 17',
-    title: '6-Year Record Preservation & Digital Backup Requirement',
-    description: 'All books of account, sales slips, purchase invoices, customs declarations, and bank statements must be maintained for 6 years.',
-    auditStandard: 'Auditors can inspect records back to Hamle 2012 E.C. (July 2020 G.C.). Digital cloud copies must be accessible.',
-    status: 'passed',
-    details: 'Digital records safely stored in local IndexedDB/localStorage with export capabilities (CSV/Excel & PDF).',
+    id: 'mor-bank-reason-category-audit',
+    category: 'BANK_RECON',
+    legalRef: 'Proc. 979/2016 Art. 22 & 27, Proc. 983/2016 Art. 109 & Ch. 6',
+    title: 'Bank Statement Reason & Category Tax Examination',
+    description: 'Every bank statement narration, payment reason, and category must be scrutinized to disallow personal drawings and identify non-income capital vs taxable sales.',
+    auditStandard: 'Disallow non-business debits (Art. 27). Treat unexplained credits as undeclared revenue (Ch. 6). Require third-party invoice cross-reference.',
+    status: bankReasonAudit.highRiskCount === 0 ? (bankReasonAudit.warningCount === 0 ? 'passed' : 'warning') : 'action_needed',
+    details:
+      bankReasonAudit.highRiskCount === 0
+        ? `100% compliant: All ${bankTransactions.length} bank transactions have verified business categories and compliant payment reasons.`
+        : `${bankReasonAudit.highRiskCount} bank transaction(s) flagged with high-risk reasons/categories (disallowed personal expense risk: ETB ${bankReasonAudit.totalDisallowedPersonalDrawings.toLocaleString(undefined, { minimumFractionDigits: 2 })}; unexplained deposits: ETB ${bankReasonAudit.totalUnexplainedDeposits.toLocaleString(undefined, { minimumFractionDigits: 2 })}).`,
   });
 
   return items;
+}
+
+// --- 6. Comprehensive Bank Reason & Category Audit Engine ---
+export interface BankReasonAuditItem {
+  id: string;
+  txId: string;
+  date: string;
+  bankAccountId: string;
+  type: 'credit' | 'debit';
+  amount: number;
+  category: BankTransaction['category'];
+  categoryLabel: string;
+  description: string;
+  reason: string;
+  notes?: string;
+
+  taxClassification:
+    | 'taxable_operating_revenue'
+    | 'nontaxable_capital_or_loan'
+    | 'nontaxable_interaccount_transfer'
+    | 'allowable_business_deduction'
+    | 'disallowed_personal_drawing'
+    | 'disallowed_fine_penalty'
+    | 'statutory_tax_remittance'
+    | 'deductible_bank_service_charge'
+    | 'unexplained_audit_risk';
+
+  status: 'compliant' | 'warning' | 'high_risk_flag';
+  reasonClarity: 'detailed' | 'adequate' | 'vague_or_missing';
+  discrepancyTitle?: string;
+  discrepancyDetail?: string;
+  legalBasis: string;
+  auditorRecommendation: string;
+}
+
+export interface BankReasonCategoryAuditSummary {
+  totalAuditedCount: number;
+  totalCreditsCount: number;
+  totalDebitsCount: number;
+
+  compliantCount: number;
+  warningCount: number;
+  highRiskCount: number;
+  auditReadinessScore: number; // 0 - 100
+
+  // Financial aggregates determined from reason & category examination
+  totalSalesDeposits: number;
+  totalCapitalAndLoansVerified: number;
+  totalInternalTransfers: number;
+  totalUnexplainedDeposits: number;
+
+  totalDeductibleSupplierExpenses: number;
+  totalDisallowedPersonalDrawings: number;
+  totalDisallowedFinesPenalties: number;
+  totalTaxRemittancesToMoR: number;
+  totalDeductibleBankCharges: number;
+  totalUnexplainedDebits: number;
+
+  categoryBreakdown: {
+    category: BankTransaction['category'];
+    label: string;
+    flowType: 'credit' | 'debit';
+    count: number;
+    amount: number;
+    taxTreatment: string;
+    auditStatus: 'compliant' | 'warning' | 'high_risk_flag';
+  }[];
+
+  items: BankReasonAuditItem[];
+}
+
+export function auditBankReasonAndCategory(
+  bankTransactions: BankTransaction[],
+  purchases: PurchaseItem[] = [],
+  sales: SaleTransaction[] = []
+): BankReasonCategoryAuditSummary {
+  let totalSalesDeposits = 0;
+  let totalCapitalAndLoansVerified = 0;
+  let totalInternalTransfers = 0;
+  let totalUnexplainedDeposits = 0;
+
+  let totalDeductibleSupplierExpenses = 0;
+  let totalDisallowedPersonalDrawings = 0;
+  let totalDisallowedFinesPenalties = 0;
+  let totalTaxRemittancesToMoR = 0;
+  let totalDeductibleBankCharges = 0;
+  let totalUnexplainedDebits = 0;
+
+  let compliantCount = 0;
+  let warningCount = 0;
+  let highRiskCount = 0;
+
+  const items: BankReasonAuditItem[] = [];
+  const categoryMap: Record<
+    string,
+    {
+      category: BankTransaction['category'];
+      label: string;
+      flowType: 'credit' | 'debit';
+      count: number;
+      amount: number;
+      taxTreatment: string;
+      auditStatus: 'compliant' | 'warning' | 'high_risk_flag';
+    }
+  > = {};
+
+  bankTransactions.forEach((tx) => {
+    const rawReason = (tx.reason || tx.description || '').trim();
+    const rawNotes = (tx.notes || '').trim();
+    const combinedReasonText = `${rawReason} ${rawNotes}`.toLowerCase();
+
+    // Reason clarity evaluation
+    let reasonClarity: 'detailed' | 'adequate' | 'vague_or_missing' = 'adequate';
+    if (!rawReason || rawReason.length <= 4 || /^(bank entry|tx|transfer|deposit|withdrawal|payment|cash)$/i.test(rawReason)) {
+      reasonClarity = 'vague_or_missing';
+    } else if (rawReason.length >= 15 || /\b(?:inv(?:oice)?|chq|ref|cbe|awash|tin|tax|salary|suppl)\b/i.test(rawReason)) {
+      reasonClarity = 'detailed';
+    }
+
+    // Friendly Category Label
+    let categoryLabel = 'Other Bank Entry';
+    switch (tx.category) {
+      case 'sale_deposit':
+        categoryLabel = 'Sales Electronic Deposit';
+        break;
+      case 'sales_cash_deposit':
+        categoryLabel = 'Sales Cash Deposit';
+        break;
+      case 'card_settlement':
+        categoryLabel = 'Card / POS / Telebirr Settlement';
+        break;
+      case 'vendor_payout':
+        categoryLabel = 'Supplier / Vendor Payout';
+        break;
+      case 'personal_drawing':
+        categoryLabel = 'Personal Drawing (Owner Private)';
+        break;
+      case 'loan_infusion':
+        categoryLabel = 'Capital / Shareholder Loan';
+        break;
+      case 'tax_payment':
+        categoryLabel = 'Tax Remittance to MoR';
+        break;
+      case 'bank_fee':
+        categoryLabel = 'Bank Service Charge / Fee';
+        break;
+      case 'cash_withdraw':
+        categoryLabel = 'Cash Withdrawal';
+        break;
+      case 'transfer':
+        categoryLabel = 'Account Transfer';
+        break;
+      default:
+        categoryLabel = 'Unclassified Bank Entry';
+        break;
+    }
+
+    let taxClassification: BankReasonAuditItem['taxClassification'] = 'unexplained_audit_risk';
+    let status: BankReasonAuditItem['status'] = 'compliant';
+    let discrepancyTitle: string | undefined = undefined;
+    let discrepancyDetail: string | undefined = undefined;
+    let legalBasis = 'Tax Administration Proclamation No. 983/2016';
+    let auditorRecommendation = 'Maintain verified supporting documentation for MoR audit.';
+
+    // --- EXAMINATION FOR CREDITS (MONEY IN) ---
+    if (tx.type === 'credit') {
+      const isLoanOrCapital =
+        tx.category === 'loan_infusion' ||
+        /(?:shareholder\s*loan|director\s*loan|capital\s*injection|capital\s*deposit|equity|owner\s*funds?|bank\s*loan|term\s*loan|infusion)/i.test(
+          combinedReasonText
+        );
+
+      const isTransfer =
+        tx.category === 'transfer' ||
+        /(?:transfer\s*from|internal\s*transfer|contra|own\s*account|tax\s*reserve|escrow)/i.test(
+          combinedReasonText
+        );
+
+      const isSalesExplicit =
+        /(?:sale|invoice|customer|payment\s*for|pos\s*settlement|daily\s*cash|telebirr\s*merchant|store)/i.test(
+          combinedReasonText
+        );
+
+      if (isLoanOrCapital) {
+        taxClassification = 'nontaxable_capital_or_loan';
+        totalCapitalAndLoansVerified += tx.amount;
+        legalBasis = 'Income Tax Proc. 979/2016 Art. 10 & 21 (Capital & Loan Injections)';
+
+        if (tx.category !== 'loan_infusion') {
+          status = 'warning';
+          discrepancyTitle = 'Loan Infusion Lacks Category Tag';
+          discrepancyDetail = `Bank reason mentions loan/capital ("${rawReason}"), but category is "${tx.category}". Tagging correctly prevents MoR auditors from treating this as taxable sales.`;
+          auditorRecommendation = 'Formally classify as "Capital / Shareholder Loan" and file signed loan contract.';
+        } else {
+          status = 'compliant';
+          auditorRecommendation = 'Ensure signed shareholder loan agreement or bank facility approval is retained under Art. 17.';
+        }
+      } else if (isTransfer) {
+        // Discrepancy Check: Is it tagged as transfer but reason mentions sales / customer?
+        if (isSalesExplicit) {
+          taxClassification = 'taxable_operating_revenue';
+          totalSalesDeposits += tx.amount;
+          status = 'high_risk_flag';
+          discrepancyTitle = 'Disguised Sales Deposit in Transfer Category';
+          discrepancyDetail = `Transaction category is set to "Account Transfer", but the bank payment reason explicitly indicates customer sales or goods payment: "${rawReason}".`;
+          legalBasis = 'Proc. 983/2016 Art. 109 (Understatement of Taxable Sales)';
+          auditorRecommendation = 'Reclassify to Sales Deposit and declare in monthly VAT return to avoid 50% understatement penalty.';
+        } else {
+          taxClassification = 'nontaxable_interaccount_transfer';
+          totalInternalTransfers += tx.amount;
+          legalBasis = 'MoR Tax Audit Manual Ch. 6 (Inter-Account Transfers)';
+          status = 'compliant';
+          auditorRecommendation = 'Verify corresponding debit exists in source bank account.';
+        }
+      } else if (
+        tx.category === 'sale_deposit' ||
+        tx.category === 'sales_cash_deposit' ||
+        tx.category === 'card_settlement' ||
+        isSalesExplicit
+      ) {
+        taxClassification = 'taxable_operating_revenue';
+        totalSalesDeposits += tx.amount;
+        legalBasis = 'VAT Proclamation No. 285/2002 & Proc. 979/2016 (Gross Commercial Revenue)';
+
+        if (reasonClarity === 'vague_or_missing') {
+          status = 'warning';
+          discrepancyTitle = 'Vague Sales Deposit Reason';
+          discrepancyDetail = 'Bank narrative lacks customer name, invoice number, or store register date.';
+          auditorRecommendation = 'Add invoice reference or cash register receipt range to reason for seamless 3-way reconciliation.';
+        } else {
+          status = 'compliant';
+          auditorRecommendation = 'Verified operating sales deposit matching business activities.';
+        }
+      } else {
+        // Unclassified Credit
+        taxClassification = 'unexplained_audit_risk';
+        totalUnexplainedDeposits += tx.amount;
+        status = 'high_risk_flag';
+        discrepancyTitle = 'Unexplained Bank Deposit';
+        discrepancyDetail = `Deposit of ETB ${tx.amount.toLocaleString()} has unclassified category ("${tx.category}") and non-specific reason: "${rawReason || 'No reason provided'}".`;
+        legalBasis = 'MoR Tax Audit Manual Ch. 6 (Bank Deposit Reconstruction Method)';
+        auditorRecommendation = 'Provide bank credit voucher and documentation of source funds immediately to prevent MoR tax assessment.';
+      }
+    }
+
+    // --- EXAMINATION FOR DEBITS (MONEY OUT) ---
+    else {
+      // 1. Personal Drawing Check (Proc 979/2016 Art. 27)
+      const isPersonalDrawing =
+        tx.category === 'personal_drawing' ||
+        /(?:school\s*fees?|tuition|personal|family|wife|husband|child(?:ren)?|home\s*rent|house\s*rent|director\s*(?:drawings?|personal|loan\s*repay)|drawings?|allowance\s*private|holiday|vacation|groceries\s*(?:home|private)|private\s*car|personal\s*medical)/i.test(
+          combinedReasonText
+        );
+
+      // 2. Fines and Penalties Check (Proc 979/2016 Art. 27(1)(e))
+      const isFineOrPenalty =
+        /(?:traffic\s*fine|police\s*fine|court\s*fine|late\s*filing\s*fee|penalty|statutory\s*fine|infraction|forfeit)/i.test(
+          combinedReasonText
+        );
+
+      // 3. Tax Remittances to MoR
+      const isTaxPayment =
+        tx.category === 'tax_payment' ||
+        /(?:ministry\s*of\s*revenues|mor\s*tax|erca|15%\s*vat|value\s*added\s*tax|profit\s*tax|income\s*tax|withholding\s*tax|2%\s*wht|tot\s*tax|customs\s*duty|tax\s*payment)/i.test(
+          combinedReasonText
+        );
+
+      // 4. Bank Service Fees
+      const isBankFee =
+        tx.category === 'bank_fee' ||
+        /(?:ledger\s*fee|service\s*chg|sms\s*alert|rtgs\s*charge|commission|maintenance\s*fee|cheque\s*clearing\s*fee|swift\s*fee|atm\s*fee)/i.test(
+          combinedReasonText
+        );
+
+      // 5. Transfer Out
+      const isTransferOut =
+        tx.category === 'transfer' ||
+        /(?:transfer\s*to|tax\s*reserve|savings\s*deposit|internal\s*transfer)/i.test(
+          combinedReasonText
+        );
+
+      if (isPersonalDrawing) {
+        taxClassification = 'disallowed_personal_drawing';
+        totalDisallowedPersonalDrawings += tx.amount;
+        status = 'high_risk_flag';
+        discrepancyTitle = 'Disallowed Personal / Domestic Payment';
+        discrepancyDetail = `Bank payment reason indicates personal expenditure: "${rawReason}". Under Article 27 of Proclamation 979/2016, domestic and personal expenses are strictly non-deductible.`;
+        legalBasis = 'Income Tax Proc. 979/2016 Art. 27(1)(a) & (c) (Disallowance of Personal Expenses)';
+        auditorRecommendation = 'Reclassify as Owner Equity Drawing. Remove from business expense claims to prevent audit disallowance & 20% penalty.';
+      } else if (isFineOrPenalty) {
+        taxClassification = 'disallowed_fine_penalty';
+        totalDisallowedFinesPenalties += tx.amount;
+        status = 'high_risk_flag';
+        discrepancyTitle = 'Non-Deductible Government Fine / Penalty';
+        discrepancyDetail = `Bank payment reason references fine or penalty: "${rawReason}". Proclamation 979/2016 Art. 27(1)(e) prohibits claiming fines as business expenses.`;
+        legalBasis = 'Income Tax Proc. 979/2016 Art. 27(1)(e) (Disallowance of Fines & Penalties)';
+        auditorRecommendation = 'Disallow 100% in tax computation. Exclude from profit tax deductible expenses.';
+      } else if (isTaxPayment) {
+        taxClassification = 'statutory_tax_remittance';
+        totalTaxRemittancesToMoR += tx.amount;
+        legalBasis = 'Tax Administration Proc. 983/2016 Art. 44 & VAT Proc. 285/2002';
+        status = 'compliant';
+        auditorRecommendation = 'Keep official MoR e-tax payment advice and bank transaction reference on file.';
+      } else if (isBankFee) {
+        taxClassification = 'deductible_bank_service_charge';
+        totalDeductibleBankCharges += tx.amount;
+        legalBasis = 'Income Tax Proc. 979/2016 Art. 22 (Ordinary & Necessary Financial Expenses)';
+        status = 'compliant';
+        auditorRecommendation = 'Fully allowable business deduction backed by bank statement debit entry.';
+      } else if (isTransferOut) {
+        taxClassification = 'nontaxable_interaccount_transfer';
+        totalInternalTransfers += tx.amount;
+        legalBasis = 'MoR Tax Audit Manual Ch. 6 (Inter-Account Transfers)';
+        status = 'compliant';
+        auditorRecommendation = 'Verify corresponding credit in recipient bank account.';
+      } else if (tx.category === 'cash_withdraw') {
+        legalBasis = 'NBE Directives on Cash Transactions & Proc. 979/2016';
+        if (tx.amount > 50000) {
+          taxClassification = 'allowable_business_deduction';
+          status = 'warning';
+          discrepancyTitle = 'Large Cash Withdrawal (> ETB 50,000)';
+          discrepancyDetail = `Cash withdrawal of ETB ${tx.amount.toLocaleString()} exceeds statutory cash threshold. Auditors require cash book proof of disbursement.`;
+          auditorRecommendation = 'Ensure petty cash vouchers and receipts are attached for all cash disbursements funded by this withdrawal.';
+        } else {
+          taxClassification = 'allowable_business_deduction';
+          status = 'compliant';
+          auditorRecommendation = 'Operating cash withdrawal; maintain petty cash drawer log.';
+        }
+      } else if (tx.category === 'vendor_payout') {
+        legalBasis = 'VAT Proc. No. 285/2002 Art. 21 & Proc. 979/2016 Art. 22';
+        if (reasonClarity === 'vague_or_missing') {
+          taxClassification = 'unexplained_audit_risk';
+          totalUnexplainedDebits += tx.amount;
+          status = 'warning';
+          discrepancyTitle = 'Supplier Payment Missing Invoice Reference';
+          discrepancyDetail = `Bank reason ("${rawReason || 'Blank'}") does not state supplier name or invoice number. MoR disallows input VAT and expense deduction without verified supplier TIN.`;
+          auditorRecommendation = 'Link payment to registered purchase invoice showing supplier TIN.';
+        } else {
+          taxClassification = 'allowable_business_deduction';
+          totalDeductibleSupplierExpenses += tx.amount;
+          status = 'compliant';
+          auditorRecommendation = 'Verified allowable business purchase supported by bank payment reason.';
+        }
+      } else {
+        // Other / Unclassified debit
+        taxClassification = 'unexplained_audit_risk';
+        totalUnexplainedDebits += tx.amount;
+        status = 'high_risk_flag';
+        discrepancyTitle = 'Unclassified Bank Outflow';
+        discrepancyDetail = `Bank payment of ETB ${tx.amount.toLocaleString()} lacks verified category and specific business purpose: "${rawReason || 'No reason'}".`;
+        legalBasis = 'Income Tax Proc. 979/2016 Art. 22 & 27';
+        auditorRecommendation = 'Assign valid business category and attach supplier invoice to prevent auditor disallowance.';
+      }
+    }
+
+    if (status === 'compliant') compliantCount += 1;
+    else if (status === 'warning') warningCount += 1;
+    else highRiskCount += 1;
+
+    // Accumulate category breakdown
+    const catBreakdownKey = `${tx.category}_${tx.type}`;
+    if (!categoryMap[catBreakdownKey]) {
+      categoryMap[catBreakdownKey] = {
+        category: tx.category,
+        label: categoryLabel,
+        flowType: tx.type,
+        count: 0,
+        amount: 0,
+        taxTreatment:
+          tx.type === 'credit'
+            ? taxClassification === 'taxable_operating_revenue'
+              ? 'Taxable Sales Revenue'
+              : 'Non-Taxable Capital / Transfer'
+            : taxClassification === 'disallowed_personal_drawing'
+            ? 'Disallowed Personal Drawing (Art. 27)'
+            : taxClassification === 'statutory_tax_remittance'
+            ? 'Official MoR Tax Remittance'
+            : 'Allowable Business Expense',
+        auditStatus: status,
+      };
+    }
+    categoryMap[catBreakdownKey].count += 1;
+    categoryMap[catBreakdownKey].amount += tx.amount;
+    if (status === 'high_risk_flag') {
+      categoryMap[catBreakdownKey].auditStatus = 'high_risk_flag';
+    } else if (status === 'warning' && categoryMap[catBreakdownKey].auditStatus !== 'high_risk_flag') {
+      categoryMap[catBreakdownKey].auditStatus = 'warning';
+    }
+
+    items.push({
+      id: `audit-${tx.id}`,
+      txId: tx.id,
+      date: tx.date,
+      bankAccountId: tx.bankAccountId,
+      type: tx.type,
+      amount: tx.amount,
+      category: tx.category,
+      categoryLabel,
+      description: tx.description,
+      reason: rawReason || tx.description || 'N/A',
+      notes: tx.notes,
+      taxClassification,
+      status,
+      reasonClarity,
+      discrepancyTitle,
+      discrepancyDetail,
+      legalBasis,
+      auditorRecommendation,
+    });
+  });
+
+  const totalAuditedCount = bankTransactions.length;
+  const totalCreditsCount = bankTransactions.filter((t) => t.type === 'credit').length;
+  const totalDebitsCount = bankTransactions.filter((t) => t.type === 'debit').length;
+
+  let auditReadinessScore = 100;
+  auditReadinessScore -= highRiskCount * 15;
+  auditReadinessScore -= warningCount * 5;
+  if (auditReadinessScore < 20) auditReadinessScore = 20;
+  if (auditReadinessScore > 100) auditReadinessScore = 100;
+
+  return {
+    totalAuditedCount,
+    totalCreditsCount,
+    totalDebitsCount,
+    compliantCount,
+    warningCount,
+    highRiskCount,
+    auditReadinessScore: Math.round(auditReadinessScore),
+    totalSalesDeposits,
+    totalCapitalAndLoansVerified,
+    totalInternalTransfers,
+    totalUnexplainedDeposits,
+    totalDeductibleSupplierExpenses,
+    totalDisallowedPersonalDrawings,
+    totalDisallowedFinesPenalties,
+    totalTaxRemittancesToMoR,
+    totalDeductibleBankCharges,
+    totalUnexplainedDebits,
+    categoryBreakdown: Object.values(categoryMap),
+    items,
+  };
 }

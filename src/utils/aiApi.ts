@@ -133,6 +133,7 @@ export interface ScannedBankStatementTransaction {
   pageNumber?: number;
   date: string;
   description: string;
+  reason?: string;
   type: 'credit' | 'debit';
   amount: number;
   category:
@@ -144,6 +145,8 @@ export interface ScannedBankStatementTransaction {
     | 'tax_payment'
     | 'bank_fee'
     | 'transfer'
+    | 'personal_drawing'
+    | 'loan_infusion'
     | 'other';
   reference?: string;
   balance?: number;

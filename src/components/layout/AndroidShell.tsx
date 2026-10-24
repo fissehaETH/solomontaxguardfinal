@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
-import { ActiveTab } from './BottomNav';
+import { BottomNav, ActiveTab } from './BottomNav';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 import { OfflineIndicator } from '../common/OfflineIndicator';
 import {
@@ -20,6 +20,12 @@ import {
   Moon,
   Sparkles,
   Smartphone,
+  Plus,
+  Camera,
+  LogIn,
+  RefreshCw,
+  User as UserIcon,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface AndroidShellProps {
@@ -30,8 +36,17 @@ interface AndroidShellProps {
   onOpenHelp: () => void;
   onQuickExport: () => void;
   onOpenAICopilot?: () => void;
+  onOpenAddSale?: () => void;
+  onOpenAddPurchase?: () => void;
+  onOpenBankDeposit?: () => void;
+  onOpenScanReceipt?: () => void;
+  onOpenGoogleSheets?: () => void;
   businessName: string;
   userEmail?: string | null;
+  userName?: string | null;
+  userPhoto?: string | null;
+  onSignInGoogle?: () => void;
+  onRefreshFromCloud?: () => void;
   onSignOut?: () => void;
   unreconciledBankCount?: number;
   auditIssuesCount?: number;
@@ -50,8 +65,17 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
   onOpenHelp,
   onQuickExport,
   onOpenAICopilot,
+  onOpenAddSale,
+  onOpenAddPurchase,
+  onOpenBankDeposit,
+  onOpenScanReceipt,
+  onOpenGoogleSheets,
   businessName,
   userEmail,
+  userName,
+  userPhoto,
+  onSignInGoogle,
+  onRefreshFromCloud,
   onSignOut,
   unreconciledBankCount = 0,
   auditIssuesCount = 0,
@@ -63,6 +87,28 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
 }) => {
   const isOnline = useOnlineStatus();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isFabOpen, setIsFabOpen] = useState(false);
+  const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
+
+  const handleManualCloudRefresh = async () => {
+    if (!onRefreshFromCloud || isRefreshingCloud) return;
+    setIsRefreshingCloud(true);
+    try {
+      await onRefreshFromCloud();
+    } finally {
+      setIsRefreshingCloud(false);
+    }
+  };
+
+  const triggerHaptic = (duration = 10) => {
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate(duration);
+      } catch {
+        // Ignore
+      }
+    }
+  };
 
   // Close sidebar on Escape key
   useEffect(() => {
@@ -227,6 +273,18 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
               </button>
             )}
 
+            {/* Google Sheets Dual Storage Button */}
+            {onOpenGoogleSheets && (
+              <button
+                onClick={onOpenGoogleSheets}
+                title="Store and sync financial records in Google Sheets"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors whitespace-nowrap shrink-0 min-h-[38px] cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                <span className="hidden sm:inline">Google Sheets</span>
+              </button>
+            )}
+
             <button
               onClick={onToggleTheme}
               title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
@@ -245,6 +303,45 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
                 </>
               )}
             </button>
+
+            {/* User Profile Chip or Guest Sign In CTA */}
+            {userEmail && !userEmail.includes('Phone Local') ? (
+              <div className="flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-full bg-stone-100 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-xs shrink-0">
+                {userPhoto ? (
+                  <img
+                    src={userPhoto}
+                    alt={userName || 'User'}
+                    className="w-5 h-5 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-orange-700 text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                    {(userName || userEmail || 'U').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span className="hidden md:inline font-medium text-stone-700 dark:text-stone-300 max-w-[110px] truncate">
+                  {userName || userEmail.split('@')[0]}
+                </span>
+                {onRefreshFromCloud && (
+                  <button
+                    onClick={handleManualCloudRefresh}
+                    title="Refresh local ledger"
+                    disabled={isRefreshingCloud}
+                    className="p-1 text-stone-500 hover:text-orange-700 transition-colors cursor-pointer rounded-full hover:bg-stone-200 dark:hover:bg-stone-700 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingCloud ? 'animate-spin text-orange-700' : ''}`} />
+                  </button>
+                )}
+              </div>
+            ) : onSignInGoogle ? (
+              <button
+                onClick={onSignInGoogle}
+                title="Sign in with Google"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white bg-orange-700 hover:bg-orange-800 rounded-lg transition-colors whitespace-nowrap shrink-0 min-h-[38px] cursor-pointer shadow-xs"
+              >
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Sign In</span>
+              </button>
+            ) : null}
 
             <div className="hidden lg:flex items-center gap-2 shrink-0">
               <button
@@ -317,28 +414,78 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
           {/* Sidebar Panel */}
           <aside className="relative z-10 w-80 max-w-[85vw] bg-white h-full shadow-2xl border-r border-stone-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              {/* Sidebar Header */}
-              <div className="p-4 border-b border-stone-200 flex items-start justify-between gap-3 bg-stone-50/70">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-stone-900 truncate">
-                    {businessName}
-                  </p>
-                  {userEmail && (
-                    <div className="flex items-center gap-1.5 mt-1 text-xs text-stone-500 truncate">
-                      <Cloud className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                      <span className="truncate">{userEmail}</span>
+              {/* Sidebar Header with User Avatar & Cloud Status */}
+              <div className="p-4 border-b border-stone-200 dark:border-stone-800 flex items-start justify-between gap-3 bg-stone-50/80 dark:bg-stone-900/60">
+                <div className="min-w-0 flex items-start gap-3">
+                  {userPhoto ? (
+                    <img
+                      src={userPhoto}
+                      alt={userName || 'User'}
+                      className="w-10 h-10 rounded-full border border-stone-300 dark:border-stone-700 object-cover shrink-0 mt-0.5"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-orange-700/10 border border-orange-700/30 flex items-center justify-center text-orange-700 font-bold shrink-0 mt-0.5">
+                      {(userName || userEmail || 'U').charAt(0).toUpperCase()}
                     </div>
                   )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-stone-900 dark:text-stone-100 truncate">
+                      {businessName}
+                    </p>
+                    {userName && (
+                      <p className="text-xs font-semibold text-stone-700 dark:text-stone-300 truncate">
+                        {userName}
+                      </p>
+                    )}
+                    {userEmail && (
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-stone-500 truncate">
+                        <Cloud className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span className="truncate">{userEmail}</span>
+                      </div>
+                    )}
+                    {userEmail && !userEmail.includes('Phone Local') ? (
+                      <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Google Verified • Cloud Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800">
+                        Phone Local Mode (Offline)
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <button
                   onClick={() => setIsSidebarOpen(false)}
                   aria-label="Close sidebar"
-                  className="p-2 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-200/70 transition-colors shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center"
+                  className="p-2 rounded-lg text-stone-500 hover:text-stone-900 hover:bg-stone-200/70 transition-colors shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
+
+              {/* Guest Mode Call-to-action in Drawer */}
+              {onSignInGoogle && (!userEmail || userEmail.includes('Phone Local')) && (
+                <div className="p-3 bg-orange-50/70 dark:bg-orange-950/40 border-b border-orange-200 dark:border-orange-900/50">
+                  <p className="text-xs font-semibold text-stone-900 dark:text-stone-100">
+                    Backup to Cloud Firestore
+                  </p>
+                  <p className="text-[11px] text-stone-600 dark:text-stone-400 mt-0.5 leading-relaxed">
+                    Sign in with Google to protect your records with multi-device online sync.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      onSignInGoogle();
+                    }}
+                    className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-orange-700 hover:bg-orange-800 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Sign in with Google</span>
+                  </button>
+                </div>
+              )}
 
               {/* Section 1: Main Shop Sections */}
               <div className="p-3 space-y-1">
@@ -428,6 +575,33 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
                   </span>
                 </button>
 
+                {onOpenGoogleSheets && (
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      onOpenGoogleSheets();
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-left bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-stone-900 transition-colors min-h-[48px] cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                      </div>
+                      <div>
+                        <span className="text-sm font-bold block text-stone-900 dark:text-stone-100">
+                          Store in Google Sheets
+                        </span>
+                        <span className="text-[11px] text-emerald-800 dark:text-emerald-300 block">
+                          በጉግል ሺት ላይ ማስቀመጫ (Multi-Tab Cloud Sync)
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-200/80 text-emerald-900 uppercase">
+                      Sheets
+                    </span>
+                  </button>
+                )}
+
                 {onOpenAICopilot && (
                   <button
                     onClick={() => {
@@ -467,6 +641,39 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
                     </span>
                   </div>
                 </button>
+
+                {/* Manual Cloud Sync Option when signed in */}
+                {onRefreshFromCloud && userEmail && !userEmail.includes('Phone Local') && (
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      handleManualCloudRefresh();
+                    }}
+                    disabled={isRefreshingCloud}
+                    className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-left text-stone-700 hover:bg-stone-100 transition-colors min-h-[48px] cursor-pointer disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <RefreshCw className={`w-5 h-5 text-emerald-600 shrink-0 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+                      <div>
+                        <span className="text-sm font-medium block text-stone-900">
+                          Sync Cloud Database Now
+                        </span>
+                        <span className="text-[11px] text-stone-500 block">
+                          ወደ ክላውድ አመሳስል (Pull &amp; Push Firestore)
+                        </span>
+                      </div>
+                    </div>
+                    {isRefreshingCloud ? (
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 animate-pulse">
+                        Syncing...
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200">
+                        Active
+                      </span>
+                    )}
+                  </button>
+                )}
 
                 {onOpenSyncModal && (
                   <button
@@ -561,9 +768,115 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-12">
+      <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28 md:pb-16">
         {children}
       </main>
+
+      {/* Android Floating Action Button (FAB) & Quick-Action Speed Dial */}
+      <div className="fixed bottom-20 right-4 lg:bottom-8 lg:right-8 z-40 no-print flex flex-col items-end">
+        {/* Speed Dial Backdrop */}
+        {isFabOpen && (
+          <div
+            onClick={() => setIsFabOpen(false)}
+            className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs z-30 transition-opacity"
+            aria-hidden="true"
+          />
+        )}
+
+        {/* Speed Dial Menu Items */}
+        {isFabOpen && (
+          <div className="relative z-40 mb-3 flex flex-col items-end gap-2.5">
+            {onOpenAddSale && (
+              <button
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsFabOpen(false);
+                  onOpenAddSale();
+                }}
+                className="flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xl border border-stone-200 dark:border-stone-700 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-xs font-bold transition-transform active:scale-95"
+              >
+                <span>የዕለት ሽያጭ መዝግብ (Daily Sale)</span>
+                <span className="w-8 h-8 rounded-full bg-orange-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <TrendingUp className="w-4 h-4" />
+                </span>
+              </button>
+            )}
+
+            {onOpenAddPurchase && (
+              <button
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsFabOpen(false);
+                  onOpenAddPurchase();
+                }}
+                className="flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xl border border-stone-200 dark:border-stone-700 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-xs font-bold transition-transform active:scale-95"
+              >
+                <span>የዕቃ ግዢ / ወጪ (Add Expense)</span>
+                <span className="w-8 h-8 rounded-full bg-emerald-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Receipt className="w-4 h-4" />
+                </span>
+              </button>
+            )}
+
+            {onOpenScanReceipt && (
+              <button
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsFabOpen(false);
+                  onOpenScanReceipt();
+                }}
+                className="flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xl border border-stone-200 dark:border-stone-700 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-xs font-bold transition-transform active:scale-95"
+              >
+                <span>ደረሰኝ በካሜራ አንሳ (Scan Receipt)</span>
+                <span className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Camera className="w-4 h-4" />
+                </span>
+              </button>
+            )}
+
+            {onOpenBankDeposit && (
+              <button
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsFabOpen(false);
+                  onOpenBankDeposit();
+                }}
+                className="flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xl border border-stone-200 dark:border-stone-700 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-xs font-bold transition-transform active:scale-95"
+              >
+                <span>የባንክ ገቢ መዝግብ (Bank Deposit)</span>
+                <span className="w-8 h-8 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Landmark className="w-4 h-4" />
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Primary FAB Button (Material 3 style) */}
+        <button
+          onClick={() => {
+            triggerHaptic(20);
+            setIsFabOpen(!isFabOpen);
+          }}
+          aria-label={isFabOpen ? 'Close quick actions' : 'Open quick add actions'}
+          aria-expanded={isFabOpen}
+          className={`relative z-40 w-14 h-14 rounded-2xl flex items-center justify-center shadow-2xl transition-all duration-300 focus:outline-hidden ${
+            isFabOpen
+              ? 'bg-stone-800 dark:bg-stone-200 text-white dark:text-stone-900 rotate-45 scale-105'
+              : 'bg-orange-700 hover:bg-orange-800 text-white active:scale-95'
+          }`}
+        >
+          <Plus className="w-7 h-7 transition-transform duration-200" />
+        </button>
+      </div>
+
+      {/* Android Bottom Navigation Bar */}
+      <BottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        unreconciledBankCount={unreconciledBankCount}
+        auditIssuesCount={auditIssuesCount}
+      />
 
       {/* Offline Status Indicator */}
       <OfflineIndicator />

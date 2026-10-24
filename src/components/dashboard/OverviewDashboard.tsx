@@ -22,6 +22,7 @@ import {
   Download,
   Pencil,
   Camera,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { ActiveTab } from '../layout/BottomNav';
 
@@ -40,6 +41,7 @@ interface OverviewDashboardProps {
   onEditPurchase?: (purchase: PurchaseItem) => void;
   onOpenHelp?: () => void;
   onQuickExport?: () => void;
+  onOpenGoogleSheets?: () => void;
 }
 
 export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
@@ -57,6 +59,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onEditPurchase,
   onOpenHelp,
   onQuickExport,
+  onOpenGoogleSheets,
 }) => {
   const today = new Date().toISOString().split('T')[0];
 

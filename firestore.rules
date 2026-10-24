@@ -6,9 +6,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Connection Health Verification Probe
+    match /test/{docId} {
+      allow read: if true;
+    }
+
     // Reusable Hardened Global Helpers
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null && (
+        request.auth.token.email_verified == true ||
+        (request.auth.token.firebase != null && request.auth.token.firebase.sign_in_provider == 'google.com') ||
+        (request.auth.providerData != null && request.auth.providerData.size() > 0 && request.auth.providerData[0].providerId == 'google.com')
+      );
     }
     function incoming() {
       return request.resource.data;
@@ -279,17 +288,18 @@ service cloud.firestore {
 
     // Collection 1: /sales/{saleId}
     match /sales/{saleId} {
-      allow get: if isSignedIn() && isValidId(saleId) && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(saleId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(saleId) && isValidSaleTransaction(incoming()) &&
         incoming().id == saleId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
       allow update: if isSignedIn() && isValidSaleTransaction(incoming()) && isValidId(saleId) &&
+        existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'receiptNumber', 'date', 'time', 'customerName', 'items',
@@ -302,8 +312,8 @@ service cloud.firestore {
 
     // Collection 2: /purchases/{purchaseId}
     match /purchases/{purchaseId} {
-      allow get: if isSignedIn() && isValidId(purchaseId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(purchaseId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(purchaseId) && isValidPurchaseItem(incoming()) &&
         incoming().id == purchaseId &&
         incoming().createdAt == request.time &&
@@ -313,7 +323,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
@@ -326,8 +336,8 @@ service cloud.firestore {
 
     // Collection 3: /bankAccounts/{accountId}
     match /bankAccounts/{accountId} {
-      allow get: if isSignedIn() && isValidId(accountId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(accountId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(accountId) && isValidBankAccount(incoming()) &&
         incoming().id == accountId &&
         incoming().createdAt == request.time &&
@@ -337,7 +347,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'bankName', 'accountNumberMasked', 'type',
@@ -348,8 +358,8 @@ service cloud.firestore {
 
     // Collection 4: /bankTransactions/{txId}
     match /bankTransactions/{txId} {
-      allow get: if isSignedIn() && isValidId(txId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(txId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(txId) && isValidBankTransaction(incoming()) &&
         incoming().id == txId &&
         incoming().createdAt == request.time &&
@@ -361,7 +371,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'bankAccountId', 'date', 'description', 'type', 'amount',
@@ -374,8 +384,8 @@ service cloud.firestore {
 
     // Collection 5: /dailyCloses/{closeId}
     match /dailyCloses/{closeId} {
-      allow get: if isSignedIn() && isValidId(closeId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(closeId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(closeId) && isValidDailyRegisterClose(incoming()) &&
         incoming().id == closeId &&
         incoming().createdAt == request.time &&
@@ -385,7 +395,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'date', 'openingFloat', 'cashSales', 'cardSales', 'bankTransferSales',
@@ -398,8 +408,8 @@ service cloud.firestore {
 
     // Collection 6: /reconcilingItems/{itemId}
     match /reconcilingItems/{itemId} {
-      allow get: if isSignedIn() && isValidId(itemId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(itemId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(itemId) && isValidReconcilingItem(incoming()) &&
         incoming().id == itemId &&
         incoming().createdAt == request.time &&
@@ -411,7 +421,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'bankAccountId', 'date', 'type', 'referenceNumber',
@@ -424,8 +434,8 @@ service cloud.firestore {
 
     // Collection 7: /brsStatements/{statementId}
     match /brsStatements/{statementId} {
-      allow get: if isSignedIn() && isValidId(statementId) && existing() != null && existing().ownerId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(statementId) && resource.data.ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(statementId) && isValidBRSStatement(incoming()) &&
         incoming().id == statementId &&
         incoming().createdAt == request.time &&
@@ -437,7 +447,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'statementNumber', 'bankAccountId', 'statementDate', 'periodStart', 'periodEnd',
@@ -454,7 +464,7 @@ service cloud.firestore {
     // Collection 8: /settings/{userId}
     match /settings/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
-      allow list: if isSignedIn() && existing() != null && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
         isValidTaxSettings(incoming()) &&
         incoming().createdAt == request.time &&
@@ -464,7 +474,7 @@ service cloud.firestore {
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
-        incoming().createdAt == existing().createdAt &&
+        (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'businessName', 'taxIdNumber', 'currency', 'currencySymbol',

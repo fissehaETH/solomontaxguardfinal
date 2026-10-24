@@ -141,6 +141,10 @@ export function formatBankCategory(cat?: BankTransaction['category'] | string): 
       return 'Card / POS Settlement';
     case 'transfer':
       return 'Account Transfer';
+    case 'personal_drawing':
+      return 'Personal Drawing (Non-Deductible)';
+    case 'loan_infusion':
+      return 'Capital / Loan Infusion (Non-Taxable)';
     default:
       return (cat || 'other').replace(/_/g, ' ');
   }

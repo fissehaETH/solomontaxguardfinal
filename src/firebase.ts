@@ -1,110 +1,99 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  setPersistence,
+  browserLocalPersistence,
+  signOut as firebaseSignOut,
+  User,
+} from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Set persistence explicitly to local persistence
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn('Failed to set auth persistence to local:', err);
+});
+
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
+});
 
-// Validate connection to Firestore on boot safely without throwing
-async function testConnection() {
+// Detect Android / Mobile / Standalone PWA environment
+export function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /android|iphone|ipad|ipod|windows phone|mobile/i.test(ua);
+}
+
+export function isStandalonePWA(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true
+  );
+}
+
+// Check if sessionStorage is accessible (storage partitioning / iframe check)
+export function isSessionStorageAccessible(): boolean {
+  if (typeof window === 'undefined') return false;
   try {
-    if (navigator.onLine) {
-      await getDocFromServer(doc(db, 'test', 'connection'));
-    }
+    const testKey = '__test_ss_accessibility__';
+    window.sessionStorage.setItem(testKey, testKey);
+    window.sessionStorage.removeItem(testKey);
+    return true;
   } catch {
-    // Non-blocking: local storage is primary
+    return false;
   }
 }
-testConnection();
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+/**
+ * Android & Iframe-optimized Google Sign-in flow.
+ * Attempts popup authentication with fallback to redirect only if sessionStorage is accessible.
+ */
+export async function signInWithGoogle(options?: { preferRedirect?: boolean }): Promise<User | null> {
+  const preferRedirect = options?.preferRedirect ?? false;
+  const sessionStorageWorking = isSessionStorageAccessible();
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  };
-}
-
-export function isFirestoreQuotaError(error: unknown): boolean {
-  if (!error) return false;
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes('Quota limit exceeded') ||
-    msg.includes('quota metric') ||
-    msg.includes('RESOURCE_EXHAUSTED') ||
-    msg.includes('Free daily read units') ||
-    msg.includes('quota') ||
-    msg.includes('exceeded free quota')
-  );
-}
-
-export function isFirestoreOfflineError(error: unknown): boolean {
-  if (!error) return false;
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes('client is offline') ||
-    msg.includes('unavailable') ||
-    msg.includes('network-request-failed') ||
-    msg.includes('Failed to get document because the client is offline') ||
-    msg.includes('could not reach Cloud Firestore')
-  );
-}
-
-export function handleFirestoreError(
-  error: unknown,
-  operationType: OperationType,
-  path: string | null
-): void {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
-    },
-    operationType,
-    path,
-  };
-  if (isFirestoreQuotaError(error)) {
-    console.warn(
-      `[Local Storage Primary] Firestore free quota reached on ${path}. Data remains 100% active in local storage.`
-    );
-    return;
+  if (preferRedirect && sessionStorageWorking) {
+    await signInWithRedirect(auth, googleProvider);
+    return null;
   }
-  if (isFirestoreOfflineError(error)) {
-    console.warn(
-      `[Local Storage Primary] Device is offline for ${path}. Changes queued locally in phone storage.`
-    );
-    return;
+
+  try {
+    const cred = await signInWithPopup(auth, googleProvider);
+    return cred.user;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: string })?.code || '';
+
+    // If popup was blocked and sessionStorage is accessible, fall back to redirect
+    if (
+      (code === 'auth/popup-blocked' ||
+        code === 'auth/cancelled-popup-request' ||
+        msg.includes('popup') ||
+        msg.includes('blocked')) &&
+      sessionStorageWorking
+    ) {
+      console.info('Popup was blocked. Falling back to redirect sign-in...');
+      await signInWithRedirect(auth, googleProvider);
+      return null;
+    }
+
+    if (code === 'auth/popup-blocked' || msg.includes('popup') || msg.includes('blocked')) {
+      throw new Error(
+        'Popup sign-in was blocked by browser or iframe settings. Please open the application in a new browser tab/window to sign in with Google.'
+      );
+    }
+
+    throw err;
   }
-  console.warn(`Firestore Operation Notice (${operationType} on ${path}):`, errInfo.error);
 }
 
+export { signInWithPopup, signInWithRedirect, getRedirectResult, firebaseSignOut };

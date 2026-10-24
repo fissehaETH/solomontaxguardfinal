@@ -948,6 +948,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
               <input
                 type="text"
                 required
+                inputMode="numeric"
                 value={vendorTin}
                 onChange={(e) => setVendorTin(e.target.value)}
                 placeholder="e.g. 0004192831"
@@ -987,6 +988,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                 type="number"
                 step="0.01"
                 min="0"
+                inputMode="decimal"
                 required
                 value={totalInputAmount || ''}
                 onChange={(e) => setTotalInputAmount(parseFloat(e.target.value || '0'))}
@@ -1001,6 +1003,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                 type="number"
                 min="0"
                 max="40"
+                inputMode="numeric"
                 value={taxRatePercent}
                 onChange={(e) => setTaxRatePercent(parseInt(e.target.value || '0', 10))}
                 className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 font-tabular"

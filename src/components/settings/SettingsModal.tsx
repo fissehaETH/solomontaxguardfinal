@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TaxSettings } from '../../types';
 import { CURRENCY_OPTIONS } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
-import { RotateCcw, Save, ShieldAlert, Building2, Sun, Moon } from 'lucide-react';
+import { RotateCcw, Save, ShieldAlert, Building2, Sun, Moon, FileSpreadsheet, ExternalLink } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface SettingsModalProps {
   onResetData: () => void;
   theme: 'light' | 'dark';
   onSetTheme: (theme: 'light' | 'dark') => void;
+  onOpenGoogleSheets?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -22,6 +23,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onResetData,
   theme,
   onSetTheme,
+  onOpenGoogleSheets,
 }) => {
   const [formData, setFormData] = useState<TaxSettings>({ ...settings });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
@@ -112,6 +114,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <input
               type="text"
               required
+              inputMode="numeric"
               value={formData.taxIdNumber}
               onChange={(e) => setFormData({ ...formData, taxIdNumber: e.target.value })}
               className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-sm text-stone-900 font-mono focus:outline-none focus:border-orange-700"
@@ -149,6 +152,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   step="0.1"
                   min="0"
                   max="50"
+                  inputMode="decimal"
                   value={Math.round(formData.defaultSalesTaxRate * 1000) / 10}
                   onChange={(e) =>
                     setFormData({
@@ -170,6 +174,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   step="0.1"
                   min="0"
                   max="60"
+                  inputMode="decimal"
                   value={Math.round(formData.corporateTaxRate * 1000) / 10}
                   onChange={(e) =>
                     setFormData({
@@ -182,6 +187,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span className="absolute right-3 top-2.5 text-xs text-stone-500">%</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Google Sheets Dual Storage Settings */}
+        <div className="space-y-3 pt-3 border-t border-stone-200">
+          <label className="block text-xs font-semibold text-stone-700">
+            Cloud Spreadsheet Storage (Google Sheets)
+          </label>
+          <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 space-y-2 text-xs">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-stone-900">
+                    {formData.googleSheetName || 'Google Sheets Dual Storage'}
+                  </h4>
+                  <p className="text-[11px] text-stone-500">
+                    Syncs Sales, Purchases, Bank Accounts, and Cash Audits into Google Drive
+                  </p>
+                </div>
+              </div>
+              {formData.googleSheetUrl && (
+                <a
+                  href={formData.googleSheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold hover:underline shrink-0"
+                >
+                  <span>Open Sheet</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+
+            {formData.googleAppsScriptUrl ? (
+              <div className="text-[11px] text-stone-600 space-y-1 pt-1 border-t border-emerald-200/60">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-semibold text-emerald-950 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Apps Script Web App Connected</span>
+                  </span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-emerald-100 text-emerald-800">
+                    Apps Script
+                  </span>
+                </div>
+                {formData.lastGoogleSheetSyncAt && (
+                  <div className="flex justify-between text-[10px] text-emerald-700">
+                    <span>Last Synced:</span>
+                    <span>{new Date(formData.lastGoogleSheetSyncAt).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            ) : formData.googleSheetId ? (
+              <div className="text-[11px] text-stone-600 space-y-0.5 pt-1 border-t border-emerald-200/60">
+                <div className="flex justify-between font-mono text-[10px]">
+                  <span>Sheet ID:</span>
+                  <span className="text-stone-700">{formData.googleSheetId.slice(0, 16)}...</span>
+                </div>
+                {formData.lastGoogleSheetSyncAt && (
+                  <div className="flex justify-between text-[10px] text-emerald-700">
+                    <span>Last Synced:</span>
+                    <span>{new Date(formData.lastGoogleSheetSyncAt).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-stone-600">
+                Sync all financial records and tax audits directly to your Google Sheet via Google Apps Script Web App.
+              </p>
+            )}
+
+            {onOpenGoogleSheets && (
+              <div className="pt-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenGoogleSheets();
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>{formData.googleSheetId ? 'Sync to Google Sheets Now' : 'Set Up Google Sheets'}</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
