@@ -2962,7 +2962,7 @@ export default function App() {
           <div className="space-y-1.5">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-orange-100 dark:bg-orange-950/60 text-orange-900 dark:text-orange-300 border border-orange-300 dark:border-orange-800">
               <ShieldCheck className="w-3.5 h-3.5 text-orange-700 dark:text-orange-400 shrink-0" />
-              <span>Android &amp; Tablet Ready PWA</span>
+              <span>Financial &amp; Tax Compliance Ledger</span>
             </div>
             <h1 className="text-xl font-bold tracking-tight text-stone-900 dark:text-stone-100">
               Solomon Building Materials Shop

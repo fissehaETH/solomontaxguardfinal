@@ -24,7 +24,7 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
   onClose,
   onNavigateTab,
 }) => {
-  const [activeSection, setActiveSection] = useState<'workflow' | 'brs' | 'audit' | 'install'>('workflow');
+  const [activeSection, setActiveSection] = useState<'workflow' | 'brs' | 'audit'>('workflow');
 
   const steps = [
     {
@@ -104,7 +104,7 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
     >
       <div className="space-y-5">
         {/* Sub-navigation tabs inside the guide */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-xl bg-stone-100 border border-stone-200">
+        <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-stone-100 border border-stone-200">
           <button
             type="button"
             onClick={() => setActiveSection('workflow')}
@@ -137,17 +137,6 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
             }`}
           >
             3. የታክስ ህጎች
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSection('install')}
-            className={`py-2 px-2 rounded-lg text-xs font-semibold transition text-center ${
-              activeSection === 'install'
-                ? 'bg-white text-orange-900 shadow-sm border border-stone-200'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            4. በስልክ መጫኛ (App)
           </button>
         </div>
 
@@ -302,48 +291,6 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
                 <h4 className="font-bold text-stone-900">4. የተሰበሰበውን 15% ተ.እ.ታ (VAT) ወደ ታክስ መጠባበቂያ ሂሳብ ያዛውሩ</h4>
                 <p className="text-stone-600 mt-0.5">
                   ከደንበኞች የሚሰበሰበው 15% VAT የመንግስት አደራ ገንዘብ ስለሆነ ለስራ ማስኬጃ እንዳይውል በ<strong>Tax Reserve Transfer</strong> አማካኝነት ወደ ተለየ የባንክ ሂሳብ ያስቀምጡ።
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeSection === 'install' && (
-          <div className="space-y-3.5 text-xs text-stone-700">
-            <div className="p-4 rounded-2xl bg-orange-50 border border-orange-200 space-y-2">
-              <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-                <Smartphone className="w-4 h-4 text-orange-700" />
-                <span>በስልክዎ መነሻ ገጽ (Home Screen) ላይ እንደ መተግበሪያ መጫኛ</span>
-              </h3>
-              <p className="leading-relaxed">
-                የዌብ አድራሻ ሳይተይቡ ልክ እንደ ተለመደው የሞባይል አፕሊኬሽን በቀጥታ ከስልክዎ ወይም ታብሌትዎ መነሻ ገጽ ላይ በ1 ንክኪ ለመክፈት የሚከተሉትን ቀላል ደረጃዎች ይከተሉ፦
-              </p>
-            </div>
-
-            <div className="space-y-2.5">
-              <div className="p-3.5 rounded-xl bg-white border border-stone-200 space-y-1.5">
-                <h4 className="font-bold text-stone-900 text-sm">ለአንድሮይድ ስልኮች (Android / Chrome / Samsung Internet)፦</h4>
-                <ol className="list-decimal pl-4 space-y-1 text-stone-600">
-                  <li>በስክሪኑ ላይኛው ክፍል ያለውን <strong>&quot;Add to Home Screen&quot;</strong> ወይም <strong>&quot;Install App&quot;</strong> የሚለውን ይጫኑ።</li>
-                  <li>ወይም በChrome ማሰሻው ከላይ በስተቀኝ ያሉትን <strong>ሶስት ነጥቦች (⋮)</strong> ይንኩ።</li>
-                  <li><strong>&quot;Add to Home screen&quot;</strong> ወይም <strong>&quot;Install application&quot;</strong> የሚለውን ይምረጡ።</li>
-                  <li><strong>&quot;Install&quot;</strong> የሚለውን ያረጋግጡ — የTaxGuard አርማ በስልክዎ ስክሪን ላይ ይቀመጣል!</li>
-                </ol>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-white border border-stone-200 space-y-1.5">
-                <h4 className="font-bold text-stone-900 text-sm">ለአይፎን እና አይፓድ (iPhone &amp; iPad / Safari)፦</h4>
-                <ol className="list-decimal pl-4 space-y-1 text-stone-600">
-                  <li>ገጹን በ<strong>Safari</strong> ማሰሻ ይክፈቱት።</li>
-                  <li>ከስር ያለውን የ<strong>Share (ማጋሪያ) ምልክት (ካሬ ከቀስት ጋር)</strong> ይንኩ።</li>
-                  <li>ወደ ታች ዝቅ ብለው <strong>&quot;Add to Home Screen&quot;</strong> የሚለውን ይምረጡ።</li>
-                  <li>ከላይ በስተቀኝ <strong>&quot;Add&quot;</strong> የሚለውን ይጫኑ — አፑ በስልክዎ ላይ ተጭኖ ያለ ብራውዘር አድራሻ ይከፈታል!</li>
-                </ol>
-              </div>
-
-              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-stone-600">
-                <p>
-                  💡 <strong>ጥቅሙ፦</strong> የዌብ አድራሻ መተየብ አያስፈልግም፣ ኢንተርኔት በሌለበት ሰዓትም (Offline) ይሰራል፣ እና ልክ እንደ ፕሌይ ስቶር አፕ ሙሉ ስክሪን ይከፈታል።
                 </p>
               </div>
             </div>

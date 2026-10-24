@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { BottomNav, ActiveTab } from './BottomNav';
-import { PWAInstallButton } from '../common/PWAInstallButton';
 import { OfflineIndicator } from '../common/OfflineIndicator';
 import {
   HelpCircle,
@@ -175,9 +174,6 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F8F7F4] text-stone-900 flex flex-col antialiased selection:bg-orange-700 selection:text-white">
-      {/* PWA Home Screen Install Banner */}
-      <PWAInstallButton variant="banner" />
-
       {/* Top Header Bar */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200 no-print">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-4">
@@ -228,11 +224,8 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
             })}
           </nav>
 
-          {/* Right: Install App + AI Copilot + Theme Toggle + Desktop Utility Actions */}
+          {/* Right: AI Copilot + Theme Toggle + Desktop Utility Actions */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Install to Home Screen Button */}
-            <PWAInstallButton variant="button" />
-
             {onOpenAICopilot && (
               <button
                 onClick={onOpenAICopilot}
@@ -589,9 +582,6 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
                 <p className="px-3 py-1.5 text-[11px] font-semibold text-stone-400">
                   Options &amp; Help (አማራጮች እና መመሪያ)
                 </p>
-
-                {/* Add to Home Screen in Mobile Drawer */}
-                <PWAInstallButton variant="drawer" />
 
                 <button
                   onClick={onToggleTheme}
