@@ -80,7 +80,7 @@ import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
 import { GoogleSheetsSyncModal } from './components/sheets/GoogleSheetsSyncModal';
-import { syncViaAppsScript } from './services/googleSheetsService';
+import { syncViaAppsScript, GoogleSheetsImportData } from './services/googleSheetsService';
 import { CheckCircle2, Landmark, ShieldCheck, LogIn, HelpCircle, Sun, Moon, Smartphone, FileSpreadsheet } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
@@ -139,6 +139,7 @@ export default function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAICopilotOpen, setIsAICopilotOpen] = useState(false);
   const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
+  const [googleSheetsInitialTab, setGoogleSheetsInitialTab] = useState<'sync' | 'populate'>('sync');
   const [initialEditingSale, setInitialEditingSale] = useState<SaleTransaction | null>(null);
   const [initialEditingPurchase, setInitialEditingPurchase] = useState<PurchaseItem | null>(null);
 
@@ -2828,6 +2829,117 @@ export default function App() {
     showToast('Financial ledger reset to initial clean state on phone.');
   };
 
+  // Populate data from Google Sheet (First-time onboarding or restoring records)
+  const handlePopulateFromGoogleSheets = (
+    importedData: GoogleSheetsImportData,
+    mode: 'replace' | 'merge'
+  ) => {
+    const activeUid = user?.uid;
+
+    if (mode === 'replace') {
+      // 1. Replace all ledger collections with records fetched from Google Sheets
+      const newSales = importedData.sales;
+      const newPurchases = importedData.purchases;
+      const newBankAccounts =
+        importedData.bankAccounts.length > 0 ? importedData.bankAccounts : bankAccounts;
+      const newBankTransactions = importedData.bankTransactions;
+      const newDailyCloses = importedData.dailyCloses;
+
+      const newSettings: TaxSettings = {
+        ...settings,
+        ...(importedData.settings || {}),
+        googleSheetId: importedData.sourceSpreadsheetId || settings.googleSheetId,
+        googleSheetName: importedData.sourceSpreadsheetTitle || settings.googleSheetName,
+        lastGoogleSheetSyncAt: new Date().toISOString(),
+      };
+
+      // Save all collections to phone storage immediately
+      saveUserLocalCollection('sales', newSales, activeUid);
+      saveUserLocalCollection('purchases', newPurchases, activeUid);
+      saveUserLocalCollection('bankAccounts', newBankAccounts, activeUid);
+      saveUserLocalCollection('bankTransactions', newBankTransactions, activeUid);
+      saveUserLocalCollection('dailyCloses', newDailyCloses, activeUid);
+      saveUserLocalSettings(newSettings, activeUid);
+
+      // Update in-memory state
+      setSales(newSales);
+      setPurchases(newPurchases);
+      setBankAccounts(newBankAccounts);
+      setBankTransactions(newBankTransactions);
+      setDailyCloses(newDailyCloses);
+      setSettings(newSettings);
+      setLastAutoSyncTime(newSettings.lastGoogleSheetSyncAt || null);
+
+      showToast(
+        `Populated ${newSales.length} sales, ${newPurchases.length} purchases, and ${newBankTransactions.length} bank transactions from Google Sheet!`
+      );
+    } else {
+      // 2. Safe merge mode: add non-duplicate records
+      const existingSaleKeys = new Set(
+        sales.map((s) => `${s.date}__${s.receiptNumber.trim().toLowerCase()}`)
+      );
+      const additionalSales = importedData.sales.filter(
+        (s) => !existingSaleKeys.has(`${s.date}__${s.receiptNumber.trim().toLowerCase()}`)
+      );
+      const mergedSales = [...sales, ...additionalSales];
+
+      const existingPurchaseKeys = new Set(
+        purchases.map((p) => `${p.date}__${p.invoiceNumber.trim().toLowerCase()}`)
+      );
+      const additionalPurchases = importedData.purchases.filter(
+        (p) => !existingPurchaseKeys.has(`${p.date}__${p.invoiceNumber.trim().toLowerCase()}`)
+      );
+      const mergedPurchases = [...purchases, ...additionalPurchases];
+
+      const existingAccountIds = new Set(bankAccounts.map((b) => b.id));
+      const additionalAccounts = importedData.bankAccounts.filter(
+        (b) => !existingAccountIds.has(b.id)
+      );
+      const mergedAccounts = [...bankAccounts, ...additionalAccounts];
+
+      const existingTxnKeys = new Set(
+        bankTransactions.map((t) => `${t.date}__${t.referenceId || t.id}__${t.amount}`)
+      );
+      const additionalTxns = importedData.bankTransactions.filter(
+        (t) => !existingTxnKeys.has(`${t.date}__${t.referenceId || t.id}__${t.amount}`)
+      );
+      const mergedTxns = [...bankTransactions, ...additionalTxns];
+
+      const existingCloseDates = new Set(dailyCloses.map((c) => c.date));
+      const additionalCloses = importedData.dailyCloses.filter(
+        (c) => !existingCloseDates.has(c.date)
+      );
+      const mergedCloses = [...dailyCloses, ...additionalCloses];
+
+      const newSettings: TaxSettings = {
+        ...settings,
+        ...(importedData.settings || {}),
+        googleSheetId: importedData.sourceSpreadsheetId || settings.googleSheetId,
+        googleSheetName: importedData.sourceSpreadsheetTitle || settings.googleSheetName,
+        lastGoogleSheetSyncAt: new Date().toISOString(),
+      };
+
+      saveUserLocalCollection('sales', mergedSales, activeUid);
+      saveUserLocalCollection('purchases', mergedPurchases, activeUid);
+      saveUserLocalCollection('bankAccounts', mergedAccounts, activeUid);
+      saveUserLocalCollection('bankTransactions', mergedTxns, activeUid);
+      saveUserLocalCollection('dailyCloses', mergedCloses, activeUid);
+      saveUserLocalSettings(newSettings, activeUid);
+
+      setSales(mergedSales);
+      setPurchases(mergedPurchases);
+      setBankAccounts(mergedAccounts);
+      setBankTransactions(mergedTxns);
+      setDailyCloses(mergedCloses);
+      setSettings(newSettings);
+      setLastAutoSyncTime(newSettings.lastGoogleSheetSyncAt || null);
+
+      showToast(
+        `Merged +${additionalSales.length} sales and +${additionalPurchases.length} purchases from Google Sheet!`
+      );
+    }
+  };
+
   // CSV Export for Tax Authorities
   const handleExportCSV = () => {
     let csv = `TAXGUARD FINANCIAL AUDIT REPORT\n`;
@@ -3150,7 +3262,14 @@ export default function App() {
           setActiveTab={setActiveTab}
           autoSyncStatus={autoSyncStatus}
           lastAutoSyncTime={lastAutoSyncTime}
-          onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+          onOpenGoogleSheets={() => {
+            setGoogleSheetsInitialTab('sync');
+            setIsGoogleSheetsModalOpen(true);
+          }}
+          onOpenPopulateGoogleSheets={() => {
+            setGoogleSheetsInitialTab('populate');
+            setIsGoogleSheetsModalOpen(true);
+          }}
           onOpenAddSale={() => {
             setInitialEditingSale(null);
             setActiveTab('sales');
@@ -3299,6 +3418,8 @@ export default function App() {
         bankTransactions={bankTransactions}
         dailyCloses={dailyCloses}
         dailyCashAudit={calculateDailyCashExamination(sales, purchases, bankTransactions, dailyCloses)}
+        initialTab={googleSheetsInitialTab}
+        onPopulateData={handlePopulateFromGoogleSheets}
       />
 
       {/* How to Use Guide Modal */}

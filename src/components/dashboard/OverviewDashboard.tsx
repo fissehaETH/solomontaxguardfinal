@@ -24,6 +24,7 @@ import {
   Camera,
   FileSpreadsheet,
   RefreshCw,
+  ArrowDownToLine,
 } from 'lucide-react';
 import { ActiveTab } from '../layout/BottomNav';
 
@@ -43,6 +44,7 @@ interface OverviewDashboardProps {
   onOpenHelp?: () => void;
   onQuickExport?: () => void;
   onOpenGoogleSheets?: () => void;
+  onOpenPopulateGoogleSheets?: () => void;
   autoSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
   lastAutoSyncTime?: string | null;
 }
@@ -63,6 +65,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onOpenHelp,
   onQuickExport,
   onOpenGoogleSheets,
+  onOpenPopulateGoogleSheets,
   autoSyncStatus = 'idle',
   lastAutoSyncTime,
 }) => {
@@ -200,13 +203,24 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onOpenPopulateGoogleSheets && (
+              <button
+                type="button"
+                onClick={onOpenPopulateGoogleSheets}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs shadow-2xs transition cursor-pointer"
+                title="Populate or restore records from Google Sheet"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Populate from Sheet</span>
+              </button>
+            )}
             {settings.googleSheetUrl && (
               <a
                 href={settings.googleSheetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs shadow-2xs transition"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-semibold text-xs shadow-2xs transition"
               >
                 <span>Open Sheet</span>
                 <ArrowUpRight className="w-3.5 h-3.5" />
@@ -231,20 +245,32 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
             <div>
               <span className="font-bold text-stone-900 block text-xs">
-                Automatic Google Sheets Sync Available
+                Automatic Google Sheets Sync &amp; Data Population
               </span>
               <span className="text-[11px] text-stone-500">
-                Connect your Google Sheet via Apps Script Web App to automatically mirror every sale, purchase, and cash audit.
+                Connect your Google Sheet to populate your records for the first time or auto-sync sales &amp; cash audits.
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenGoogleSheets}
-            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs transition shrink-0 cursor-pointer shadow-2xs"
-          >
-            Connect Sheets
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onOpenPopulateGoogleSheets && (
+              <button
+                type="button"
+                onClick={onOpenPopulateGoogleSheets}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs transition cursor-pointer shadow-2xs"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Populate from Sheet</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onOpenGoogleSheets}
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-stone-50 text-stone-700 border border-stone-300 font-semibold text-xs transition cursor-pointer shadow-2xs"
+            >
+              Connect Sheets
+            </button>
+          </div>
         </div>
       ) : null}
 

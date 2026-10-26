@@ -7,7 +7,7 @@ import {
   TaxSettings,
 } from '../types';
 import { DailyCashAuditSummary } from '../utils/dailyCashReconciliation';
-import { formatCurrency, formatDate } from '../utils/formatters';
+import { formatCurrency, formatDate, DEFAULT_TAX_SETTINGS } from '../utils/formatters';
 
 export interface GoogleSheetsSyncResult {
   success: boolean;
@@ -24,6 +24,28 @@ export interface GoogleSheetsSyncResult {
   };
   error?: string;
   method?: 'appscript';
+}
+
+export interface GoogleSheetsImportData {
+  settings?: Partial<TaxSettings>;
+  sales: SaleTransaction[];
+  purchases: PurchaseItem[];
+  bankAccounts: BankAccount[];
+  bankTransactions: BankTransaction[];
+  dailyCloses: DailyRegisterClose[];
+  rawStats: {
+    salesCount: number;
+    purchasesCount: number;
+    bankAccountsCount: number;
+    bankTransactionsCount: number;
+    dailyClosesCount: number;
+  };
+  spreadsheetTitle?: string;
+  spreadsheetId?: string;
+  spreadsheetUrl?: string;
+  sourceSpreadsheetId?: string;
+  sourceSpreadsheetTitle?: string;
+  source: 'appscript' | 'public_sheet';
 }
 
 export interface GoogleSheetsSyncOptions {
@@ -416,9 +438,14 @@ export const TAXGUARD_APPS_SCRIPT_CODE = `/**
  */
 
 function doGet(e) {
+  var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
+  if (action === 'read' || action === 'export' || action === 'populate') {
+    return handleRead(e.parameter ? e.parameter.spreadsheetId : null);
+  }
+
   return ContentService.createTextOutput(JSON.stringify({
     status: 'success',
-    message: 'TaxGuard Google Apps Script Web App is connected and ready to receive financial data!',
+    message: 'TaxGuard Google Apps Script Web App is connected and ready to receive and export financial data!',
     timestamp: new Date().toISOString()
   })).setMimeType(ContentService.MimeType.JSON);
 }
@@ -434,6 +461,11 @@ function doPost(e) {
     }
 
     var payload = JSON.parse(raw);
+
+    // If client requested reading/populating data
+    if (payload.action === 'read' || payload.action === 'export' || payload.action === 'populate') {
+      return handleRead(payload.spreadsheetId);
+    }
     
     // Determine active spreadsheet: container-bound sheet or by spreadsheetId
     var ss = null;
@@ -490,6 +522,56 @@ function doPost(e) {
   }
 }
 
+function handleRead(spreadsheetId) {
+  try {
+    var ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (e) {}
+
+    if (!ss && spreadsheetId) {
+      try {
+        ss = SpreadsheetApp.openById(spreadsheetId);
+      } catch (e) {}
+    }
+
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        message: 'Spreadsheet not found. Ensure the script is bound to your sheet or valid spreadsheetId is passed.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var allSheets = ss.getSheets();
+    var sheetsData = {};
+    for (var i = 0; i < allSheets.length; i++) {
+      var s = allSheets[i];
+      var name = s.getName();
+      var lastRow = s.getLastRow();
+      var lastCol = s.getLastColumn();
+      if (lastRow > 0 && lastCol > 0) {
+        sheetsData[name] = s.getRange(1, 1, lastRow, lastCol).getValues();
+      } else {
+        sheetsData[name] = [];
+      }
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'success',
+      spreadsheetId: ss.getId(),
+      spreadsheetUrl: ss.getUrl(),
+      spreadsheetTitle: ss.getName(),
+      readAt: new Date().toISOString(),
+      sheets: sheetsData
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'error',
+      message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
 function updateTab(ss, sheetName, rows, headerColor) {
   if (!rows || rows.length === 0) return;
   var sheet = ss.getSheetByName(sheetName);
@@ -536,3 +618,563 @@ function updateTab(ss, sheetName, rows, headerColor) {
   sheet.autoResizeColumns(1, Math.min(numCols, 15));
 }
 `;
+
+// =========================================================================
+// DATA POPULATION & IMPORT HELPERS (GOOGLE SHEETS -> TAXGUARD)
+// =========================================================================
+
+export function parseNumber(val: unknown): number {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const str = String(val).trim().replace(/[^0-9.-]/g, '');
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
+export function parseDateStr(val: unknown): string {
+  if (!val) return new Date().toISOString().split('T')[0];
+  if (val instanceof Date) {
+    return val.toISOString().split('T')[0];
+  }
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.slice(0, 10);
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+  return new Date().toISOString().split('T')[0];
+}
+
+export function parseCsvToRows(csvText: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      currentRow.push(currentField.trim());
+      if (currentRow.some((f) => f.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((f) => f.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
+function findSheetRows(sheetsMap: Record<string, any[][]>, keywords: string[]): any[][] {
+  for (const key of Object.keys(sheetsMap)) {
+    const lowerKey = key.toLowerCase();
+    if (keywords.some((kw) => lowerKey.includes(kw.toLowerCase()))) {
+      return sheetsMap[key] || [];
+    }
+  }
+  return [];
+}
+
+/**
+ * Parses raw 2D sheet arrays into validated domain objects
+ */
+export function parseSpreadsheetSheets(
+  sheetsMap: Record<string, any[][]>,
+  fallbackSettings: TaxSettings
+): GoogleSheetsImportData {
+  const importedSettings: Partial<TaxSettings> = {};
+
+  // 1. Overview Sheet -> Settings
+  const overviewRows = findSheetRows(sheetsMap, ['overview', 'tax summary', 'summary']);
+  if (overviewRows.length > 0) {
+    for (const row of overviewRows) {
+      if (!row || row.length < 2) continue;
+      const key = String(row[0] || '').trim().toLowerCase();
+      const val = row[1];
+      if (!val) continue;
+
+      if (key.includes('business name')) {
+        importedSettings.businessName = String(val).trim();
+      } else if (key.includes('tax id') || key.includes('tin')) {
+        importedSettings.taxIdNumber = String(val).trim();
+      } else if (key.includes('currency') && !key.includes('symbol')) {
+        const rawCurr = String(val).trim();
+        const code = rawCurr.slice(0, 5).trim();
+        if (code) {
+          importedSettings.currency = code;
+          importedSettings.currencySymbol = `${code} `;
+        }
+      }
+    }
+  }
+
+  // 2. Sales Register -> SaleTransaction[]
+  const salesRows = findSheetRows(sheetsMap, ['sales', 'ሽያጭ']);
+  const sales: SaleTransaction[] = [];
+  if (salesRows.length > 1) {
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(salesRows.length, 5); i++) {
+      const rowStr = (salesRows[i] || []).join(' ').toLowerCase();
+      if (rowStr.includes('date') && (rowStr.includes('receipt') || rowStr.includes('total') || rowStr.includes('gross') || rowStr.includes('customer'))) {
+        headerIdx = i;
+        break;
+      }
+    }
+    const headers = (salesRows[headerIdx] || []).map((h) => String(h || '').trim().toLowerCase());
+    const findCol = (regex: RegExp) => headers.findIndex((h) => regex.test(h));
+
+    const dateCol = findCol(/date|ቀን/i);
+    const receiptCol = findCol(/receipt|invoice|fs|ቁጥር/i);
+    const customerCol = findCol(/customer|ደንበኛ/i);
+    const methodCol = findCol(/method|payment|አከፋፈል/i);
+    const totalCol = findCol(/gross|total|ድምር|ጠቅላላ/i);
+    const cashCol = findCol(/cash|ጥሬ/i);
+    const transferCol = findCol(/transfer|ባንክ/i);
+    const taxRateCol = findCol(/rate|መጠን/i);
+    const taxCol = findCol(/vat amount|tax amount|ታክስ|vat/i);
+    const subtotalCol = findCol(/subtotal|net base|base/i);
+    const notesCol = findCol(/note|ማስታወሻ/i);
+
+    for (let i = headerIdx + 1; i < salesRows.length; i++) {
+      const row = salesRows[i];
+      if (!row || row.length === 0) continue;
+      const rawDate = dateCol >= 0 ? row[dateCol] : row[0];
+      const date = parseDateStr(rawDate);
+      const totalAmount = totalCol >= 0 ? parseNumber(row[totalCol]) : parseNumber(row[4]);
+      if (!totalAmount && !rawDate) continue;
+
+      const receiptNumber =
+        receiptCol >= 0 && row[receiptCol]
+          ? String(row[receiptCol]).trim()
+          : `REC-${date.replace(/-/g, '')}-${i}`;
+      const customerName =
+        customerCol >= 0 && row[customerCol] ? String(row[customerCol]).trim() : 'Daily Sales Customer';
+      const cashAmount = cashCol >= 0 ? parseNumber(row[cashCol]) : 0;
+      const transferAmount = transferCol >= 0 ? parseNumber(row[transferCol]) : 0;
+      const rawMethod = methodCol >= 0 ? String(row[methodCol]).toLowerCase() : '';
+      const paymentMethod: 'cash' | 'bank_transfer' =
+        (transferAmount > 0 && cashAmount === 0) || rawMethod.includes('transfer') || rawMethod.includes('bank')
+          ? 'bank_transfer'
+          : 'cash';
+      const taxAmount = taxCol >= 0 ? parseNumber(row[taxCol]) : (totalAmount * 0.15) / 1.15;
+      const subtotal = subtotalCol >= 0 ? parseNumber(row[subtotalCol]) : totalAmount - taxAmount;
+      const taxRate =
+        taxRateCol >= 0 && parseNumber(row[taxRateCol]) > 0 ? parseNumber(row[taxRateCol]) / 100 : 0.15;
+      const notes = notesCol >= 0 && row[notesCol] ? String(row[notesCol]).trim() : '';
+
+      sales.push({
+        id: `sale-${date.replace(/-/g, '')}-${receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        date,
+        time: '17:00',
+        receiptNumber,
+        customerName,
+        items: [
+          {
+            id: `item-${i}-1`,
+            name: `${customerName} Merchandise`,
+            quantity: 1,
+            unitPrice: subtotal,
+          },
+        ],
+        paymentMethod,
+        totalAmount,
+        cashAmount: cashAmount || (paymentMethod === 'cash' ? totalAmount : 0),
+        bankTransferAmount: transferAmount || (paymentMethod === 'bank_transfer' ? totalAmount : 0),
+        taxAmount: Math.round(taxAmount * 100) / 100,
+        subtotal: Math.round(subtotal * 100) / 100,
+        taxRate: taxRate > 1 ? taxRate / 100 : taxRate || 0.15,
+        isReconciledWithBank: transferAmount > 0 || paymentMethod === 'bank_transfer',
+        notes,
+        createdAt: Date.now() - (salesRows.length - i) * 60000,
+      });
+    }
+  }
+
+  // 3. Purchase Invoices -> PurchaseItem[]
+  const purchaseRows = findSheetRows(sheetsMap, ['purchase', 'invoice', 'ግዢ', 'expense']);
+  const purchases: PurchaseItem[] = [];
+  if (purchaseRows.length > 1) {
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(purchaseRows.length, 5); i++) {
+      const rowStr = (purchaseRows[i] || []).join(' ').toLowerCase();
+      if (rowStr.includes('date') && (rowStr.includes('invoice') || rowStr.includes('supplier') || rowStr.includes('vendor') || rowStr.includes('total'))) {
+        headerIdx = i;
+        break;
+      }
+    }
+    const headers = (purchaseRows[headerIdx] || []).map((h) => String(h || '').trim().toLowerCase());
+    const findCol = (regex: RegExp) => headers.findIndex((h) => regex.test(h));
+
+    const dateCol = findCol(/date|ቀን/i);
+    const invoiceCol = findCol(/invoice|ደረሰኝ|ቁጥር/i);
+    const vendorCol = findCol(/supplier|vendor|አቅራቢ/i);
+    const tinCol = findCol(/tin|ቲን/i);
+    const categoryCol = findCol(/category|ዘርፍ/i);
+    const methodCol = findCol(/method|payment|አከፋፈል/i);
+    const totalCol = findCol(/total|ድምር|ጠቅላላ/i);
+    const taxCol = findCol(/vat amount|tax|ተ.እ.ታ/i);
+    const subtotalCol = findCol(/pre-tax|subtotal/i);
+    const deductCol = findCol(/deduct/i);
+    const notesCol = findCol(/note|ማስታወሻ/i);
+
+    for (let i = headerIdx + 1; i < purchaseRows.length; i++) {
+      const row = purchaseRows[i];
+      if (!row || row.length === 0) continue;
+      const rawDate = dateCol >= 0 ? row[dateCol] : row[0];
+      const date = parseDateStr(rawDate);
+      const totalAmount = totalCol >= 0 ? parseNumber(row[totalCol]) : parseNumber(row[6]);
+      if (!totalAmount && !rawDate) continue;
+
+      const invoiceNumber =
+        invoiceCol >= 0 && row[invoiceCol]
+          ? String(row[invoiceCol]).trim()
+          : `INV-${date.replace(/-/g, '')}-${i}`;
+      const vendorName = vendorCol >= 0 && row[vendorCol] ? String(row[vendorCol]).trim() : 'Supplier';
+      const vendorTin = tinCol >= 0 && row[tinCol] ? String(row[tinCol]).trim() : '';
+      const rawCat = categoryCol >= 0 ? String(row[categoryCol]).toLowerCase() : '';
+      let category: any = 'materials_inventory';
+      if (rawCat.includes('rent')) category = 'rent';
+      else if (rawCat.includes('utility') || rawCat.includes('electric') || rawCat.includes('water')) category = 'utilities';
+      else if (rawCat.includes('transport') || rawCat.includes('freight')) category = 'transport';
+      else if (rawCat.includes('repair') || rawCat.includes('maintenance')) category = 'repairs';
+      else if (rawCat.includes('salary') || rawCat.includes('wage')) category = 'salaries';
+      else if (rawCat.includes('fuel')) category = 'fuel';
+
+      const rawMethod = methodCol >= 0 ? String(row[methodCol]).toLowerCase() : '';
+      const paymentMethod: any =
+        rawMethod.includes('transfer') || rawMethod.includes('bank') ? 'bank_transfer' : 'cash';
+      const taxAmount = taxCol >= 0 ? parseNumber(row[taxCol]) : (totalAmount * 0.15) / 1.15;
+      const subtotal = subtotalCol >= 0 ? parseNumber(row[subtotalCol]) : totalAmount - taxAmount;
+      const deductibility =
+        deductCol >= 0 && String(row[deductCol]).toLowerCase().includes('non')
+          ? 'non_deductible'
+          : 'fully_deductible';
+      const deductiblePercentage = deductibility === 'fully_deductible' ? 100 : 0;
+      const notes = notesCol >= 0 && row[notesCol] ? String(row[notesCol]).trim() : '';
+
+      purchases.push({
+        id: `pur-${date.replace(/-/g, '')}-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        date,
+        invoiceNumber,
+        vendorName,
+        vendorTin,
+        itemName: `${vendorName} Goods / Services`,
+        category,
+        quantity: 1,
+        unitCost: Math.round(subtotal * 100) / 100,
+        paymentMethod,
+        totalAmount,
+        taxRate: 0.15,
+        taxAmount: Math.round(taxAmount * 100) / 100,
+        subtotal: Math.round(subtotal * 100) / 100,
+        deductibility,
+        deductiblePercentage,
+        isReconciledWithBank: paymentMethod === 'bank_transfer',
+        notes,
+        createdAt: Date.now() - (purchaseRows.length - i) * 60000,
+      });
+    }
+  }
+
+  // 4. Bank Accounts & Transactions
+  const bankRows = findSheetRows(sheetsMap, ['bank', 'account', 'ባንክ', 'txn']);
+  const bankAccounts: BankAccount[] = [];
+  const bankTransactions: BankTransaction[] = [];
+
+  if (bankRows.length > 0) {
+    let mode: 'none' | 'accounts' | 'transactions' = 'none';
+    for (let i = 0; i < bankRows.length; i++) {
+      const row = bankRows[i];
+      if (!row || row.length === 0) continue;
+      const firstCell = String(row[0] || '').trim().toUpperCase();
+
+      if (firstCell.includes('BANK ACCOUNTS LIST')) {
+        mode = 'accounts';
+        continue;
+      }
+      if (firstCell.includes('BANK TRANSACTIONS REGISTER') || (firstCell.includes('DATE') && String(row[1] || '').includes('Bank Account'))) {
+        mode = 'transactions';
+        continue;
+      }
+
+      if (mode === 'accounts') {
+        if (firstCell.includes('ACCOUNT NAME') || firstCell === '') continue;
+        const name = String(row[0] || '').trim();
+        if (!name) continue;
+        const bankName = String(row[1] || 'Commercial Bank of Ethiopia (CBE)').trim();
+        const accNum = String(row[2] || '•••• 4821').trim();
+        const curr = String(row[3] || fallbackSettings.currency || 'ETB').trim();
+        const balance = parseNumber(row[4]);
+        const id = `acc-${name.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'main'}`;
+
+        bankAccounts.push({
+          id,
+          name,
+          bankName,
+          accountNumberMasked: accNum,
+          type: name.toLowerCase().includes('reserve') ? 'tax_reserve' : 'checking',
+          currentBalance: balance,
+          currency: curr,
+          color: name.toLowerCase().includes('reserve') ? '#059669' : '#ea580c',
+        });
+      } else if (mode === 'transactions') {
+        if (firstCell.includes('DATE') || firstCell === '') continue;
+        const date = parseDateStr(row[0]);
+        const targetAccId = String(row[1] || '').trim();
+        const desc = String(row[2] || 'Bank Transaction').trim();
+        const typeStr = String(row[3] || '').trim().toLowerCase();
+        const type: 'credit' | 'debit' =
+          typeStr.includes('debit') || typeStr.includes('withdrawal') || typeStr.includes('payment')
+            ? 'debit'
+            : 'credit';
+        const amount = parseNumber(row[4]);
+        const category = (String(row[5] || 'other').trim().toLowerCase()) as any;
+        const reconciled = String(row[6] || '').trim().toUpperCase() === 'YES';
+
+        if (amount > 0) {
+          bankTransactions.push({
+            id: `btx-sheet-${date.replace(/-/g, '')}-${i}`,
+            bankAccountId: targetAccId || (bankAccounts[0]?.id || 'acc-cbe-main'),
+            date,
+            description: desc,
+            type,
+            amount,
+            category: category || 'other',
+            isReconciled: reconciled,
+          });
+        }
+      }
+    }
+  }
+
+  // Ensure primary business account exists
+  if (bankAccounts.length === 0) {
+    bankAccounts.push({
+      id: 'acc-cbe-main',
+      name: 'Main Business Account',
+      bankName: 'Commercial Bank of Ethiopia (CBE)',
+      accountNumberMasked: '•••• 4821',
+      type: 'checking',
+      currentBalance: 0,
+      currency: fallbackSettings.currency || 'ETB',
+      color: '#ea580c',
+    });
+  }
+
+  // 5. Daily Cash Reconciliation -> DailyRegisterClose[]
+  const cashRows = findSheetRows(sheetsMap, ['daily cash', 'cash', 'reconciliation', 'ካሽ']);
+  const dailyCloses: DailyRegisterClose[] = [];
+  if (cashRows.length > 1) {
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(cashRows.length, 5); i++) {
+      const rowStr = (cashRows[i] || []).join(' ').toLowerCase();
+      if (rowStr.includes('date') && (rowStr.includes('sales') || rowStr.includes('deposit') || rowStr.includes('audit'))) {
+        headerIdx = i;
+        break;
+      }
+    }
+
+    for (let i = headerIdx + 1; i < cashRows.length; i++) {
+      const row = cashRows[i];
+      if (!row || row.length < 2) continue;
+      const rawDate = row[0];
+      if (!rawDate) continue;
+      const date = parseDateStr(rawDate);
+      const totalSales = parseNumber(row[2]);
+      const cashSales = parseNumber(row[3]);
+      const transferSales = parseNumber(row[4]);
+      const cashPurchases = parseNumber(row[5]);
+      const bankDeposit = parseNumber(row[9]);
+      const undeposited = parseNumber(row[11]);
+
+      if (totalSales > 0 || cashSales > 0 || bankDeposit > 0) {
+        dailyCloses.push({
+          id: `close-${date.replace(/-/g, '')}`,
+          date,
+          openingFloat: 0,
+          cashSales,
+          cardSales: 0,
+          bankTransferSales: transferSales,
+          totalGrossSales: totalSales,
+          totalTaxCollected: Math.round(((totalSales * 0.15) / 1.15) * 100) / 100,
+          cashPaidOutForPurchases: cashPurchases,
+          actualCashCounted: undeposited,
+          cashVariance: 0,
+          bankDepositAmount: bankDeposit,
+          closedBy: 'Google Sheet Import',
+          status: 'balanced',
+          notes: `Imported from Google Sheet (${date})`,
+        });
+      }
+    }
+  }
+
+  return {
+    settings: importedSettings,
+    sales,
+    purchases,
+    bankAccounts,
+    bankTransactions,
+    dailyCloses,
+    rawStats: {
+      salesCount: sales.length,
+      purchasesCount: purchases.length,
+      bankAccountsCount: bankAccounts.length,
+      bankTransactionsCount: bankTransactions.length,
+      dailyClosesCount: dailyCloses.length,
+    },
+    source: 'appscript',
+  };
+}
+
+/**
+ * Fetches and populates financial data from Google Sheets
+ */
+export async function fetchDataFromGoogleSheets(options: {
+  appsScriptUrl?: string;
+  spreadsheetIdOrUrl?: string;
+  spreadsheetId?: string;
+  sheetUrl?: string;
+  settings?: Partial<TaxSettings>;
+}): Promise<GoogleSheetsImportData> {
+  const { appsScriptUrl, spreadsheetIdOrUrl, spreadsheetId, sheetUrl, settings } = options;
+  const cleanUrl = (appsScriptUrl || settings?.googleAppsScriptUrl || '').trim();
+
+  let targetSheetId = (
+    spreadsheetId ||
+    spreadsheetIdOrUrl ||
+    sheetUrl ||
+    settings?.googleSheetId ||
+    ''
+  ).trim();
+
+  if (targetSheetId.includes('/spreadsheets/d/')) {
+    const match = targetSheetId.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match) targetSheetId = match[1];
+  }
+
+  let sheetsData: Record<string, any[][]> | null = null;
+  let detectedTitle = settings?.googleSheetName || 'Google Sheets Ledger';
+  let detectedId = targetSheetId;
+  let detectedUrl = settings?.googleSheetUrl || '';
+  let sourceMethod: 'appscript' | 'public_sheet' = 'appscript';
+
+  // 1. Try Google Apps Script Web App
+  if (cleanUrl.startsWith('https://script.google.com/macros/s/')) {
+    try {
+      const getUrl = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=read${targetSheetId ? `&spreadsheetId=${encodeURIComponent(targetSheetId)}` : ''}&t=${Date.now()}`;
+      const res = await fetch(getUrl, { method: 'GET' });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.status === 'success' && json.sheets && typeof json.sheets === 'object') {
+          sheetsData = json.sheets;
+          if (json.spreadsheetTitle) detectedTitle = json.spreadsheetTitle;
+          if (json.spreadsheetId) detectedId = json.spreadsheetId;
+          if (json.spreadsheetUrl) detectedUrl = json.spreadsheetUrl;
+          sourceMethod = 'appscript';
+        }
+      }
+    } catch {}
+
+    // Fallback POST if GET didn't return sheets
+    if (!sheetsData) {
+      try {
+        const postRes = await fetch(cleanUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'read', spreadsheetId: targetSheetId }),
+        });
+        if (postRes.ok) {
+          const json = await postRes.json().catch(() => null);
+          if (json && json.status === 'success' && json.sheets && typeof json.sheets === 'object') {
+            sheetsData = json.sheets;
+            if (json.spreadsheetTitle) detectedTitle = json.spreadsheetTitle;
+            if (json.spreadsheetId) detectedId = json.spreadsheetId;
+            if (json.spreadsheetUrl) detectedUrl = json.spreadsheetUrl;
+            sourceMethod = 'appscript';
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Direct Google Sheet Public CSV Fallback (GViz export)
+  if (!sheetsData && targetSheetId) {
+    try {
+      const gvizSheets: Record<string, any[][]> = {};
+      const expectedSheets = [
+        'Overview & Tax Summary',
+        'Sales Register',
+        'Purchase Invoices',
+        'Bank Accounts & Txns',
+        'Daily Cash Reconciliation',
+      ];
+
+      let anyFetched = false;
+      for (const sheetName of expectedSheets) {
+        try {
+          const gvizUrl = `https://docs.google.com/spreadsheets/d/${targetSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+          const gRes = await fetch(gvizUrl);
+          if (gRes.ok) {
+            const csvText = await gRes.text();
+            if (csvText && csvText.length > 10 && !csvText.includes('<!DOCTYPE html>')) {
+              gvizSheets[sheetName] = parseCsvToRows(csvText);
+              anyFetched = true;
+            }
+          }
+        } catch {}
+      }
+
+      if (anyFetched) {
+        sheetsData = gvizSheets;
+        sourceMethod = 'public_sheet';
+        detectedId = targetSheetId;
+        detectedUrl = `https://docs.google.com/spreadsheets/d/${targetSheetId}/edit`;
+      }
+    } catch {}
+  }
+
+  if (!sheetsData || Object.keys(sheetsData).length === 0) {
+    throw new Error(
+      'Could not read data from Google Sheet. Please check that your Google Apps Script Web App URL is correct and deployed with "Who has access: Anyone", or verify your spreadsheet link.'
+    );
+  }
+
+  const fallback = (settings as TaxSettings) || DEFAULT_TAX_SETTINGS;
+  const parsed = parseSpreadsheetSheets(sheetsData, fallback);
+  parsed.spreadsheetTitle = detectedTitle;
+  parsed.spreadsheetId = detectedId;
+  parsed.spreadsheetUrl = detectedUrl;
+  parsed.sourceSpreadsheetId = detectedId;
+  parsed.sourceSpreadsheetTitle = detectedTitle;
+  parsed.source = sourceMethod;
+  return parsed;
+}
+
