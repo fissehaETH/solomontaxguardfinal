@@ -61,6 +61,10 @@ const STORAGE_KEYS = {
   SYNC_QUEUE: 'taxguard_offline_sync_queue',
   LAST_SYNC: 'taxguard_last_synced_timestamp',
   QUOTA_FLAG: 'taxguard_firestore_quota_exceeded',
+  SAVED_APPS_SCRIPT_URL: 'taxguard_persistent_google_apps_script_url',
+  SAVED_GOOGLE_SHEET_ID: 'taxguard_persistent_google_sheet_id',
+  SAVED_GOOGLE_SHEET_URL: 'taxguard_persistent_google_sheet_url',
+  SAVED_GOOGLE_SHEET_NAME: 'taxguard_persistent_google_sheet_name',
 };
 
 function getKey(baseKey: string, uid?: string | null): string {
@@ -256,6 +260,26 @@ export function loadUserLocalData(uid?: string | null) {
     settings = loadFromStorage<TaxSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_TAX_SETTINGS);
   }
 
+  // Restore persistent Google Sheets connection if missing from settings
+  try {
+    const savedUrl = localStorage.getItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL);
+    const savedId = localStorage.getItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID);
+    const savedSheetUrl = localStorage.getItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_URL);
+    const savedName = localStorage.getItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME);
+    if (!settings.googleAppsScriptUrl && savedUrl) {
+      settings.googleAppsScriptUrl = savedUrl;
+    }
+    if (!settings.googleSheetId && savedId) {
+      settings.googleSheetId = savedId;
+    }
+    if (!settings.googleSheetUrl && savedSheetUrl) {
+      settings.googleSheetUrl = savedSheetUrl;
+    }
+    if (!settings.googleSheetName && savedName) {
+      settings.googleSheetName = savedName;
+    }
+  } catch {}
+
   return {
     sales,
     purchases,
@@ -329,6 +353,22 @@ export function saveUserLocalSettings(settings: TaxSettings, uid?: string | null
   const targetKey = getKey(STORAGE_KEYS.SETTINGS, uid);
   saveToStorage(targetKey, settings);
   idbSet(targetKey, settings).catch(() => {});
+
+  // Persist Google Sheets config permanently across user resets and clears
+  try {
+    if (settings.googleAppsScriptUrl) {
+      localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, settings.googleAppsScriptUrl);
+    }
+    if (settings.googleSheetId) {
+      localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, settings.googleSheetId);
+    }
+    if (settings.googleSheetUrl) {
+      localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_URL, settings.googleSheetUrl);
+    }
+    if (settings.googleSheetName) {
+      localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME, settings.googleSheetName);
+    }
+  } catch {}
 
   if (uid && uid !== 'guest' && targetKey !== STORAGE_KEYS.SETTINGS) {
     try {
@@ -571,6 +611,16 @@ export function resetAllDataToDemo(uid?: string | null): {
   brsStatements: BankReconciliationStatement[];
   settings: TaxSettings;
 } {
+  const currentSettings = loadUserLocalData(uid).settings;
+  const preservedSettings: TaxSettings = {
+    ...DEFAULT_TAX_SETTINGS,
+    googleAppsScriptUrl: currentSettings.googleAppsScriptUrl,
+    googleSheetId: currentSettings.googleSheetId,
+    googleSheetUrl: currentSettings.googleSheetUrl,
+    googleSheetName: currentSettings.googleSheetName,
+    autoSyncToGoogleSheets: currentSettings.autoSyncToGoogleSheets,
+  };
+
   saveUserLocalCollection('sales', INITIAL_SALES, uid);
   saveUserLocalCollection('purchases', INITIAL_PURCHASES, uid);
   saveUserLocalCollection('bankAccounts', INITIAL_BANK_ACCOUNTS, uid);
@@ -578,7 +628,7 @@ export function resetAllDataToDemo(uid?: string | null): {
   saveUserLocalCollection('dailyCloses', INITIAL_DAILY_CLOSES, uid);
   saveUserLocalCollection('reconcilingItems', INITIAL_RECONCILING_ITEMS, uid);
   saveUserLocalCollection('brsStatements', INITIAL_BRS_STATEMENTS, uid);
-  saveUserLocalSettings(DEFAULT_TAX_SETTINGS, uid);
+  saveUserLocalSettings(preservedSettings, uid);
 
   return {
     sales: INITIAL_SALES,
@@ -588,7 +638,7 @@ export function resetAllDataToDemo(uid?: string | null): {
     dailyCloses: INITIAL_DAILY_CLOSES,
     reconcilingItems: INITIAL_RECONCILING_ITEMS,
     brsStatements: INITIAL_BRS_STATEMENTS,
-    settings: DEFAULT_TAX_SETTINGS,
+    settings: preservedSettings,
   };
 }
 

@@ -40,8 +40,12 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
+  Pencil,
+  Link2,
+  Trash2,
 } from 'lucide-react';
 import { formatDate } from '../../utils/formatters';
+import { STORAGE_KEYS } from '../../utils/storage';
 
 interface GoogleSheetsSyncModalProps {
   isOpen: boolean;
@@ -75,14 +79,40 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   initialTab = 'sync',
   onPopulateData,
 }) => {
+  const getInitialSavedUrl = () => {
+    if (settings.googleAppsScriptUrl) return settings.googleAppsScriptUrl;
+    try {
+      return (
+        localStorage.getItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL) ||
+        localStorage.getItem('taxguard_persistent_google_apps_script_url') ||
+        ''
+      );
+    } catch {
+      return '';
+    }
+  };
+
+  const getInitialSavedSheetId = () => {
+    if (settings.googleSheetId) return settings.googleSheetId;
+    try {
+      return (
+        localStorage.getItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID) ||
+        localStorage.getItem('taxguard_persistent_google_sheet_id') ||
+        ''
+      );
+    } catch {
+      return '';
+    }
+  };
+
+  const initialUrl = getInitialSavedUrl();
   const [activeTab, setActiveTab] = useState<'sync' | 'populate'>(initialTab);
-  const [appsScriptUrl, setAppsScriptUrl] = useState(
-    settings.googleAppsScriptUrl || ''
-  );
-  const [customSheetId, setCustomSheetId] = useState(settings.googleSheetId || '');
+  const [appsScriptUrl, setAppsScriptUrl] = useState(initialUrl);
+  const [customSheetId, setCustomSheetId] = useState(getInitialSavedSheetId());
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(
     settings.autoSyncToGoogleSheets !== false
   );
+  const [isEditingUrl, setIsEditingUrl] = useState(!Boolean(initialUrl));
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -107,10 +137,23 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [showDataDetails, setShowDataDetails] = useState(false);
 
   React.useEffect(() => {
-    if (initialTab) {
-      setActiveTab(initialTab);
+    if (isOpen) {
+      const resolvedUrl = getInitialSavedUrl();
+      const resolvedSheetId = getInitialSavedSheetId();
+      if (resolvedUrl) {
+        setAppsScriptUrl(resolvedUrl);
+        setIsEditingUrl(false);
+      } else {
+        setIsEditingUrl(true);
+      }
+      if (resolvedSheetId) {
+        setCustomSheetId(resolvedSheetId);
+      }
+      if (initialTab) {
+        setActiveTab(initialTab);
+      }
     }
-  }, [initialTab]);
+  }, [isOpen, settings.googleAppsScriptUrl, settings.googleSheetId, initialTab]);
 
   if (!isOpen) return null;
 
@@ -132,8 +175,64 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     }
   };
 
+  const handleUrlChange = (newUrl: string) => {
+    setAppsScriptUrl(newUrl);
+    setTestUrlStatus(null);
+    setFetchError(null);
+    const clean = newUrl.trim();
+    if (clean) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, clean);
+      } catch {}
+      onUpdateSettings({
+        ...settings,
+        googleAppsScriptUrl: clean,
+        googleSyncMethod: 'appscript',
+      });
+    }
+  };
+
+  const handleSheetIdChange = (newId: string) => {
+    setCustomSheetId(newId);
+    setFetchError(null);
+    const clean = newId.trim();
+    if (clean) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, clean);
+      } catch {}
+      onUpdateSettings({
+        ...settings,
+        googleSheetId: clean,
+      });
+    }
+  };
+
+  const handleDisconnect = () => {
+    setAppsScriptUrl('');
+    setCustomSheetId('');
+    setIsEditingUrl(true);
+    setTestUrlStatus(null);
+    setFetchError(null);
+    setFetchedData(null);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL);
+      localStorage.removeItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID);
+      localStorage.removeItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_URL);
+      localStorage.removeItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME);
+    } catch {}
+    onUpdateSettings({
+      ...settings,
+      googleAppsScriptUrl: undefined,
+      googleSheetId: undefined,
+      googleSheetUrl: undefined,
+      googleSheetName: undefined,
+      autoSyncToGoogleSheets: false,
+    });
+  };
+
   const handleTestAppsScriptUrl = async () => {
-    if (!appsScriptUrl.trim()) {
+    const cleanUrl = appsScriptUrl.trim();
+    if (!cleanUrl) {
       setTestUrlStatus({
         success: false,
         message: 'Please paste your Apps Script Web App URL first.',
@@ -144,8 +243,13 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     setIsTestingUrl(true);
     setTestUrlStatus(null);
     try {
-      const res = await testAppsScriptUrl(appsScriptUrl);
+      const res = await testAppsScriptUrl(cleanUrl);
       setTestUrlStatus(res);
+      if (res.success) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, cleanUrl);
+        } catch {}
+      }
     } catch (err) {
       setTestUrlStatus({
         success: false,
@@ -181,7 +285,20 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         dailyCashAudit,
       });
 
-      // Save Apps Script settings
+      // Save Apps Script settings permanently
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, cleanUrl);
+        if (result.spreadsheetId) {
+          localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, result.spreadsheetId);
+        }
+        if (result.spreadsheetUrl) {
+          localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_URL, result.spreadsheetUrl);
+        }
+        if (result.spreadsheetTitle) {
+          localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME, result.spreadsheetTitle);
+        }
+      } catch {}
+
       onUpdateSettings({
         ...settings,
         googleAppsScriptUrl: cleanUrl,
@@ -193,6 +310,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         autoSyncToGoogleSheets: autoSyncEnabled,
       });
 
+      setIsEditingUrl(false);
       setSyncResult(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -204,16 +322,34 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
 
   const handleSaveSettingsOnly = () => {
     const cleanUrl = appsScriptUrl.trim();
+    const cleanSheet = customSheetId.trim();
+
+    if (cleanUrl) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, cleanUrl);
+      } catch {}
+    }
+    if (cleanSheet) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, cleanSheet);
+      } catch {}
+    }
+
     onUpdateSettings({
       ...settings,
       googleAppsScriptUrl: cleanUrl,
       googleSyncMethod: 'appscript',
       autoSyncToGoogleSheets: autoSyncEnabled,
-      googleSheetId: customSheetId.trim() || settings.googleSheetId,
+      googleSheetId: cleanSheet || settings.googleSheetId,
     });
+
+    if (cleanUrl) {
+      setIsEditingUrl(false);
+    }
+
     setTestUrlStatus({
       success: true,
-      message: 'Google Sheets sync settings saved successfully!',
+      message: 'Google Sheets sync settings permanently saved on this device!',
     });
   };
 
@@ -250,6 +386,17 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         );
       } else {
         setFetchedData(data);
+        if (cleanUrl) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, cleanUrl);
+          } catch {}
+        }
+        if (cleanSheet) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, cleanSheet);
+          } catch {}
+        }
+        setIsEditingUrl(false);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -269,15 +416,25 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     }
 
     // Also persist any retrieved sheet config
-    if (fetchedData.sourceSpreadsheetId || appsScriptUrl.trim()) {
-      onUpdateSettings({
-        ...settings,
-        googleAppsScriptUrl: appsScriptUrl.trim() || settings.googleAppsScriptUrl,
-        googleSheetId: fetchedData.sourceSpreadsheetId || settings.googleSheetId,
-        googleSheetName: fetchedData.sourceSpreadsheetTitle || settings.googleSheetName,
-        lastGoogleSheetSyncAt: new Date().toISOString(),
-      });
-    }
+    const targetUrl = appsScriptUrl.trim() || settings.googleAppsScriptUrl;
+    const targetId = fetchedData.sourceSpreadsheetId || settings.googleSheetId;
+    const targetTitle = fetchedData.sourceSpreadsheetTitle || settings.googleSheetName;
+
+    try {
+      if (targetUrl) localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, targetUrl);
+      if (targetId) localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, targetId);
+      if (targetTitle) localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME, targetTitle);
+    } catch {}
+
+    onUpdateSettings({
+      ...settings,
+      googleAppsScriptUrl: targetUrl,
+      googleSheetId: targetId,
+      googleSheetName: targetTitle,
+      lastGoogleSheetSyncAt: new Date().toISOString(),
+    });
+
+    setIsEditingUrl(false);
 
     setPopulateSuccess(
       mode === 'replace'
@@ -372,65 +529,158 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                 </p>
               </div>
 
-              {/* Source Inputs */}
-              <div className="space-y-3 p-4 rounded-xl bg-stone-50 border border-stone-200">
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-stone-700">
-                    Google Apps Script Web App URL (Recommended)
-                  </label>
+              {/* Source Inputs / Connected Card */}
+              {appsScriptUrl.trim() && !isEditingUrl ? (
+                <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-50 via-white to-teal-50 border border-emerald-300 shadow-2xs space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                        <FileSpreadsheet className="w-5 h-5 text-emerald-200" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-emerald-950">
+                            Connected Google Sheet
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Saved Permanently
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-600 font-mono truncate mt-0.5 max-w-md">
+                          {appsScriptUrl}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(true)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-100 border border-stone-300 text-stone-700 font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                        title="Edit or change saved Apps Script URL"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-stone-500" />
+                        <span>Change URL</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDisconnect}
+                        className="p-1.5 rounded-lg bg-white hover:bg-red-50 border border-stone-200 text-stone-400 hover:text-red-600 transition cursor-pointer shadow-2xs"
+                        title="Clear saved connection"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {(settings.googleSheetName || customSheetId.trim()) && (
+                    <div className="text-[11px] text-emerald-900 bg-emerald-100/70 px-3 py-1.5 rounded-lg flex items-center justify-between border border-emerald-200">
+                      <span className="font-semibold truncate">
+                        Target Sheet: {settings.googleSheetName || customSheetId}
+                      </span>
+                      {settings.lastGoogleSheetSyncAt && (
+                        <span className="text-[10px] text-emerald-700 shrink-0 font-mono">
+                          Last Synced: {formatDate(settings.lastGoogleSheetSyncAt)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleFetchSheetData}
+                    disabled={isFetchingSheet}
+                    className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isFetchingSheet ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Reading Data from Google Sheet...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownToLine className="w-4 h-4 text-emerald-200" />
+                        <span>Fetch Data from Connected Sheet (ከሺት መረጃዎችን ጫን)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3 p-4 rounded-xl bg-stone-50 border border-stone-200">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-stone-800">
+                      Google Apps Script Web App URL
+                    </label>
+                    {appsScriptUrl.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(false)}
+                        className="text-[11px] text-emerald-700 hover:underline font-semibold cursor-pointer"
+                      >
+                        Cancel Editing
+                      </button>
+                    )}
+                  </div>
+
                   <input
                     type="url"
                     value={appsScriptUrl}
-                    onChange={(e) => {
-                      setAppsScriptUrl(e.target.value);
-                      setFetchError(null);
-                    }}
+                    onChange={(e) => handleUrlChange(e.target.value)}
                     placeholder="https://script.google.com/macros/s/AKfycb.../exec"
                     className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white font-mono"
                   />
                   <p className="text-[10px] text-stone-500">
-                    Your deployed Apps Script can read all 5 tabs without requiring OAuth or public sheet links.
+                    Your Web App URL is automatically remembered permanently on this browser. You won&apos;t need to re-enter it.
                   </p>
-                </div>
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-stone-700">
-                    Or Google Sheet Link / Spreadsheet ID (Fallback)
-                  </label>
-                  <input
-                    type="text"
-                    value={customSheetId}
-                    onChange={(e) => {
-                      setCustomSheetId(e.target.value);
-                      setFetchError(null);
-                    }}
-                    placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs.../edit or Sheet ID"
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white font-mono"
-                  />
-                  <p className="text-[10px] text-stone-500">
-                    For direct sheet links, ensure &quot;Anyone with the link can view&quot; is enabled in Google Sheets sharing.
-                  </p>
-                </div>
+                  <div className="space-y-1 pt-1">
+                    <label className="block text-xs font-semibold text-stone-700">
+                      Or Google Sheet Link / Spreadsheet ID (Fallback)
+                    </label>
+                    <input
+                      type="text"
+                      value={customSheetId}
+                      onChange={(e) => handleSheetIdChange(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs.../edit or Sheet ID"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white font-mono"
+                    />
+                    <p className="text-[10px] text-stone-500">
+                      For direct sheet links, ensure &quot;Anyone with the link can view&quot; is enabled in Google Sheets sharing.
+                    </p>
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={handleFetchSheetData}
-                  disabled={isFetchingSheet || (!appsScriptUrl.trim() && !customSheetId.trim())}
-                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
-                >
-                  {isFetchingSheet ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Reading Data from Google Sheet...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ArrowDownToLine className="w-4 h-4" />
-                      <span>Fetch &amp; Preview Sheet Data (ከሺት መረጃዎችን ጫን)</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleFetchSheetData}
+                      disabled={isFetchingSheet || (!appsScriptUrl.trim() && !customSheetId.trim())}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isFetchingSheet ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Reading Data...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ArrowDownToLine className="w-4 h-4" />
+                          <span>Save &amp; Fetch Sheet Data (ከሺት ጫን)</span>
+                        </>
+                      )}
+                    </button>
+                    {appsScriptUrl.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(false)}
+                        className="px-4 py-2.5 rounded-xl bg-white border border-stone-300 hover:bg-stone-100 text-stone-700 font-semibold text-xs transition cursor-pointer"
+                      >
+                        Keep &amp; Hide
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Error Message */}
               {fetchError && (
@@ -700,53 +950,152 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                 )}
               </div>
 
-              {/* URL Input & Test Connection */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-stone-700">
-                  Google Apps Script Web App URL (የዌብ አፕ አድራሻ)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={appsScriptUrl}
-                    onChange={(e) => {
-                      setAppsScriptUrl(e.target.value);
-                      setTestUrlStatus(null);
-                    }}
-                    placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                    className="flex-1 px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleTestAppsScriptUrl}
-                    disabled={isTestingUrl || !appsScriptUrl.trim()}
-                    className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                  >
-                    {isTestingUrl ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Globe className="w-3.5 h-3.5 text-emerald-700" />
-                    )}
-                    <span>Test URL</span>
-                  </button>
-                </div>
-                {testUrlStatus && (
-                  <div
-                    className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
-                      testUrlStatus.success
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : 'bg-amber-50 text-amber-900 border border-amber-200'
-                    }`}
-                  >
-                    {testUrlStatus.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    ) : (
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    )}
-                    <span>{testUrlStatus.message}</span>
+              {/* URL Input / Connected Card in Auto-Sync Tab */}
+              {appsScriptUrl.trim() && !isEditingUrl ? (
+                <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-50 via-white to-teal-50 border border-emerald-300 shadow-2xs space-y-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                        <Link2 className="w-4 h-4 text-emerald-200" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-emerald-950">
+                            Apps Script Web App Connected
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Saved Permanently
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-600 font-mono truncate mt-0.5 max-w-md">
+                          {appsScriptUrl}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleTestAppsScriptUrl}
+                        disabled={isTestingUrl}
+                        className="px-2.5 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                        title="Test Web App connection"
+                      >
+                        {isTestingUrl ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Globe className="w-3.5 h-3.5 text-emerald-700" />
+                        )}
+                        <span>Test</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(true)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-100 border border-stone-300 text-stone-700 font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                        title="Change Apps Script URL"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-stone-500" />
+                        <span>Change</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDisconnect}
+                        className="p-1.5 rounded-lg bg-white hover:bg-red-50 border border-stone-200 text-stone-400 hover:text-red-600 transition cursor-pointer shadow-2xs"
+                        title="Clear saved connection"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  {testUrlStatus && (
+                    <div
+                      className={`p-2 rounded-lg text-[11px] flex items-center gap-2 ${
+                        testUrlStatus.success
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-amber-50 text-amber-900 border border-amber-200'
+                      }`}
+                    >
+                      {testUrlStatus.success ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      )}
+                      <span>{testUrlStatus.message}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2 p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-stone-700">
+                      Google Apps Script Web App URL (የዌብ አፕ አድራሻ)
+                    </label>
+                    {appsScriptUrl.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(false)}
+                        className="text-[11px] text-emerald-700 hover:underline font-semibold cursor-pointer"
+                      >
+                        Cancel Editing
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={appsScriptUrl}
+                      onChange={(e) => handleUrlChange(e.target.value)}
+                      placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                      className="flex-1 px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestAppsScriptUrl}
+                      disabled={isTestingUrl || !appsScriptUrl.trim()}
+                      className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isTestingUrl ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Globe className="w-3.5 h-3.5 text-emerald-700" />
+                      )}
+                      <span>Test URL</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-stone-500">
+                    Once entered, this URL is permanently saved on this device. You will not have to paste it every time.
+                  </p>
+                  {testUrlStatus && (
+                    <div
+                      className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                        testUrlStatus.success
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-amber-50 text-amber-900 border border-amber-200'
+                      }`}
+                    >
+                      {testUrlStatus.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      )}
+                      <span>{testUrlStatus.message}</span>
+                    </div>
+                  )}
+                  {appsScriptUrl.trim() && (
+                    <div className="pt-1 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingUrl(false)}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs transition cursor-pointer"
+                      >
+                        Done &amp; Save URL
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Automatic Sync Feature Toggle */}
               <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50/80 to-teal-50/60 border border-emerald-200/80 space-y-2">

@@ -297,7 +297,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>{formData.googleSheetId ? 'Sync to Google Sheets Now' : 'Set Up Google Sheets'}</span>
+                  <span>
+                    {formData.googleAppsScriptUrl || formData.googleSheetId
+                      ? 'Manage Google Sheets Sync'
+                      : 'Connect Google Sheets'}
+                  </span>
                 </button>
               </div>
             )}
