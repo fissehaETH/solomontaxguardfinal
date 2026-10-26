@@ -5,6 +5,7 @@ import {
   BankTransaction,
   DailyRegisterClose,
   TaxSettings,
+  ExpenseCategory,
 } from '../types';
 import { DailyCashAuditSummary } from '../utils/dailyCashReconciliation';
 import { formatCurrency, formatDate, DEFAULT_TAX_SETTINGS } from '../utils/formatters';
@@ -24,6 +25,13 @@ export interface GoogleSheetsSyncResult {
   };
   error?: string;
   method?: 'appscript';
+}
+
+export interface SheetTabDetail {
+  name: string;
+  rowCount: number;
+  previewHeaders: string[];
+  isEmpty: boolean;
 }
 
 export interface GoogleSheetsImportData {
@@ -46,6 +54,9 @@ export interface GoogleSheetsImportData {
   sourceSpreadsheetId?: string;
   sourceSpreadsheetTitle?: string;
   source: 'appscript' | 'public_sheet';
+  tabNames?: string[];
+  tabSummaries?: SheetTabDetail[];
+  isEmptySpreadsheet?: boolean;
 }
 
 export interface GoogleSheetsSyncOptions {
@@ -692,14 +703,17 @@ export function parseCsvToRows(csvText: string): string[][] {
   return rows;
 }
 
-function findSheetRows(sheetsMap: Record<string, any[][]>, keywords: string[]): any[][] {
+function findSheetRows(
+  sheetsMap: Record<string, any[][]>,
+  keywords: string[]
+): { name: string; rows: any[][] } {
   for (const key of Object.keys(sheetsMap)) {
     const lowerKey = key.toLowerCase();
     if (keywords.some((kw) => lowerKey.includes(kw.toLowerCase()))) {
-      return sheetsMap[key] || [];
+      return { name: key, rows: sheetsMap[key] || [] };
     }
   }
-  return [];
+  return { name: '', rows: [] };
 }
 
 /**
@@ -711,8 +725,36 @@ export function parseSpreadsheetSheets(
 ): GoogleSheetsImportData {
   const importedSettings: Partial<TaxSettings> = {};
 
+  const tabNames = Object.keys(sheetsMap);
+  const tabSummaries: SheetTabDetail[] = tabNames.map((name) => {
+    const rawRows = sheetsMap[name] || [];
+    const nonEmptyRows = rawRows.filter(
+      (r) => r && r.some((c) => c !== '' && c !== null && c !== undefined)
+    );
+    const headers =
+      rawRows.length > 0
+        ? (rawRows[0] || []).map((c) => String(c || '').trim()).filter(Boolean)
+        : [];
+    return {
+      name,
+      rowCount: nonEmptyRows.length,
+      previewHeaders: headers.slice(0, 6),
+      isEmpty: nonEmptyRows.length <= 1,
+    };
+  });
+
   // 1. Overview Sheet -> Settings
-  const overviewRows = findSheetRows(sheetsMap, ['overview', 'tax summary', 'summary']);
+  const overviewMatch = findSheetRows(sheetsMap, [
+    'overview & tax summary',
+    'overview',
+    'tax summary',
+    'summary',
+    'info',
+    'profile',
+    'business',
+    'ማጠቃለያ',
+  ]);
+  const overviewRows = overviewMatch.rows;
   if (overviewRows.length > 0) {
     for (const row of overviewRows) {
       if (!row || row.length < 2) continue;
@@ -736,7 +778,26 @@ export function parseSpreadsheetSheets(
   }
 
   // 2. Sales Register -> SaleTransaction[]
-  const salesRows = findSheetRows(sheetsMap, ['sales', 'ሽያጭ']);
+  const salesMatch = findSheetRows(sheetsMap, [
+    'sales register',
+    'sales',
+    'ሽያጭ',
+    'sale',
+    'revenues',
+    'revenue',
+    'incomes',
+    'income',
+    'receipts',
+    'receipt',
+    'orders',
+    'order',
+    'customers',
+    'customer',
+    'ደንበኞች',
+    'ገቢ',
+    'ሂሳብ',
+  ]);
+  const salesRows = salesMatch.rows;
   const sales: SaleTransaction[] = [];
   if (salesRows.length > 1) {
     let headerIdx = 0;
@@ -818,7 +879,27 @@ export function parseSpreadsheetSheets(
   }
 
   // 3. Purchase Invoices -> PurchaseItem[]
-  const purchaseRows = findSheetRows(sheetsMap, ['purchase', 'invoice', 'ግዢ', 'expense']);
+  const purchaseMatch = findSheetRows(sheetsMap, [
+    'purchase invoices',
+    'purchase',
+    'purchases',
+    'invoice',
+    'invoices',
+    'ግዢ',
+    'expense',
+    'expenses',
+    'supplier',
+    'suppliers',
+    'vendor',
+    'vendors',
+    'cost',
+    'costs',
+    'bills',
+    'bill',
+    'አቅራቢዎች',
+    'ወጪ',
+  ]);
+  const purchaseRows = purchaseMatch.rows;
   const purchases: PurchaseItem[] = [];
   if (purchaseRows.length > 1) {
     let headerIdx = 0;
@@ -859,13 +940,16 @@ export function parseSpreadsheetSheets(
       const vendorName = vendorCol >= 0 && row[vendorCol] ? String(row[vendorCol]).trim() : 'Supplier';
       const vendorTin = tinCol >= 0 && row[tinCol] ? String(row[tinCol]).trim() : '';
       const rawCat = categoryCol >= 0 ? String(row[categoryCol]).toLowerCase() : '';
-      let category: any = 'materials_inventory';
-      if (rawCat.includes('rent')) category = 'rent';
+      let category: ExpenseCategory = 'inventory_cogs';
+      if (rawCat.includes('rent')) category = 'rent_lease';
       else if (rawCat.includes('utility') || rawCat.includes('electric') || rawCat.includes('water')) category = 'utilities';
-      else if (rawCat.includes('transport') || rawCat.includes('freight')) category = 'transport';
-      else if (rawCat.includes('repair') || rawCat.includes('maintenance')) category = 'repairs';
-      else if (rawCat.includes('salary') || rawCat.includes('wage')) category = 'salaries';
-      else if (rawCat.includes('fuel')) category = 'fuel';
+      else if (rawCat.includes('transport') || rawCat.includes('freight')) category = 'logistics_transport';
+      else if (rawCat.includes('repair') || rawCat.includes('maintenance')) category = 'equipment_repairs';
+      else if (rawCat.includes('pack')) category = 'packaging_supplies';
+      else if (rawCat.includes('fee') || rawCat.includes('legal') || rawCat.includes('account')) category = 'professional_fees';
+      else if (rawCat.includes('meal') || rawCat.includes('food')) category = 'meals_entertainment';
+      else if (rawCat.includes('market') || rawCat.includes('ad')) category = 'marketing_ads';
+      else if (rawCat.includes('other')) category = 'other_operational';
 
       const rawMethod = methodCol >= 0 ? String(row[methodCol]).toLowerCase() : '';
       const paymentMethod: any =
@@ -903,8 +987,151 @@ export function parseSpreadsheetSheets(
     }
   }
 
-  // 4. Bank Accounts & Transactions
-  const bankRows = findSheetRows(sheetsMap, ['bank', 'account', 'ባንክ', 'txn']);
+  // 4. Fallback: If neither sales nor purchases matched standard tab names, scan all sheets (e.g. Sheet1)
+  if (sales.length === 0 && purchases.length === 0) {
+    for (const [sheetName, rawRows] of Object.entries(sheetsMap)) {
+      if (!rawRows || rawRows.length < 2) continue;
+
+      let headerIdx = -1;
+      let headers: string[] = [];
+      for (let i = 0; i < Math.min(rawRows.length, 5); i++) {
+        const row = rawRows[i] || [];
+        const rowStr = row.join(' ').toLowerCase();
+        if (
+          rowStr.includes('date') ||
+          rowStr.includes('ቀን') ||
+          rowStr.includes('amount') ||
+          rowStr.includes('total') ||
+          rowStr.includes('ድምር') ||
+          rowStr.includes('price') ||
+          rowStr.includes('ዋጋ') ||
+          rowStr.includes('customer') ||
+          rowStr.includes('vendor') ||
+          rowStr.includes('supplier')
+        ) {
+          headerIdx = i;
+          headers = row.map((h) => String(h || '').trim().toLowerCase());
+          break;
+        }
+      }
+
+      if (headerIdx === -1) {
+        headerIdx = 0;
+        headers = (rawRows[0] || []).map((h) => String(h || '').trim().toLowerCase());
+      }
+
+      const findCol = (regex: RegExp) => headers.findIndex((h) => regex.test(h));
+      const dateCol = findCol(/date|ቀን|ዕለት|time|day/i);
+      const totalCol = findCol(/gross|total|ድምር|ጠቅላላ|amount|price|ዋጋ|cost/i);
+      const customerCol = findCol(/customer|client|buyer|ደንበኛ|name|ስም/i);
+      const supplierCol = findCol(/supplier|vendor|አቅራቢ|payee/i);
+      const invoiceCol = findCol(/invoice|receipt|ደረሰኝ|fs|ቁጥር|ref|bill|id/i);
+      const typeCol = findCol(/type|category|ዘርፍ|kind|ዓይነት/i);
+
+      for (let i = headerIdx + 1; i < rawRows.length; i++) {
+        const row = rawRows[i];
+        if (!row || row.length === 0) continue;
+        const totalAmount =
+          totalCol >= 0
+            ? parseNumber(row[totalCol])
+            : parseNumber(row[1] || row[2] || row[0]);
+        if (totalAmount <= 0) continue;
+
+        const rawDate = dateCol >= 0 ? row[dateCol] : row[0];
+        const date = parseDateStr(rawDate);
+        const rawType = typeCol >= 0 ? String(row[typeCol]).toLowerCase() : '';
+        const isPurchaseRow =
+          (supplierCol >= 0 && Boolean(row[supplierCol])) ||
+          /purchase|expense|cost|ወጪ|ግዢ/i.test(rawType) ||
+          /purchase|expense|cost|ወጪ|ግዢ/i.test(sheetName);
+
+        if (isPurchaseRow) {
+          const vendorName =
+            supplierCol >= 0 && row[supplierCol]
+              ? String(row[supplierCol]).trim()
+              : 'Supplier';
+          const invoiceNum =
+            invoiceCol >= 0 && row[invoiceCol]
+              ? String(row[invoiceCol]).trim()
+              : `INV-${date.replace(/-/g, '')}-${i}`;
+          purchases.push({
+            id: `pur-${date.replace(/-/g, '')}-${invoiceNum.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+            date,
+            invoiceNumber: invoiceNum,
+            vendorName,
+            vendorTin: '',
+            itemName: `${vendorName} Goods / Services`,
+            category: 'inventory_cogs',
+            quantity: 1,
+            unitCost: totalAmount,
+            paymentMethod: 'cash',
+            totalAmount,
+            taxRate: 0.15,
+            taxAmount: Math.round(((totalAmount * 0.15) / 1.15) * 100) / 100,
+            subtotal: Math.round((totalAmount / 1.15) * 100) / 100,
+            deductibility: 'fully_deductible',
+            deductiblePercentage: 100,
+            isReconciledWithBank: false,
+            notes: `Imported from ${sheetName}`,
+            createdAt: Date.now() - (rawRows.length - i) * 60000,
+          });
+        } else {
+          const custName =
+            customerCol >= 0 && row[customerCol]
+              ? String(row[customerCol]).trim()
+              : 'Cash Customer';
+          const recNum =
+            invoiceCol >= 0 && row[invoiceCol]
+              ? String(row[invoiceCol]).trim()
+              : `REC-${date.replace(/-/g, '')}-${i}`;
+          sales.push({
+            id: `sale-${date.replace(/-/g, '')}-${recNum.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+            date,
+            time: '17:00',
+            receiptNumber: recNum,
+            customerName: custName,
+            items: [
+              {
+                id: `item-${i}-1`,
+                name: `${custName} Merchandise`,
+                quantity: 1,
+                unitPrice: totalAmount,
+              },
+            ],
+            paymentMethod: 'cash',
+            totalAmount,
+            cashAmount: totalAmount,
+            bankTransferAmount: 0,
+            taxAmount: Math.round(((totalAmount * 0.15) / 1.15) * 100) / 100,
+            subtotal: Math.round((totalAmount / 1.15) * 100) / 100,
+            taxRate: 0.15,
+            isReconciledWithBank: false,
+            notes: `Imported from ${sheetName}`,
+            createdAt: Date.now() - (rawRows.length - i) * 60000,
+          });
+        }
+      }
+    }
+  }
+
+  // 5. Bank Accounts & Transactions
+  const bankMatch = findSheetRows(sheetsMap, [
+    'bank accounts & txns',
+    'bank accounts',
+    'bank',
+    'account',
+    'accounts',
+    'ባንክ',
+    'txn',
+    'txns',
+    'transaction',
+    'transactions',
+    'statement',
+    'deposits',
+    'deposit',
+    'cbe',
+  ]);
+  const bankRows = bankMatch.rows;
   const bankAccounts: BankAccount[] = [];
   const bankTransactions: BankTransaction[] = [];
 
@@ -988,8 +1215,20 @@ export function parseSpreadsheetSheets(
     });
   }
 
-  // 5. Daily Cash Reconciliation -> DailyRegisterClose[]
-  const cashRows = findSheetRows(sheetsMap, ['daily cash', 'cash', 'reconciliation', 'ካሽ']);
+  // 6. Daily Cash Reconciliation -> DailyRegisterClose[]
+  const cashMatch = findSheetRows(sheetsMap, [
+    'daily cash reconciliation',
+    'daily cash',
+    'cash',
+    'reconciliation',
+    'ካሽ',
+    'audit',
+    'close',
+    'daily',
+    'safe',
+    'መዝጊያ',
+  ]);
+  const cashRows = cashMatch.rows;
   const dailyCloses: DailyRegisterClose[] = [];
   if (cashRows.length > 1) {
     let headerIdx = 0;
@@ -1051,6 +1290,9 @@ export function parseSpreadsheetSheets(
       dailyClosesCount: dailyCloses.length,
     },
     source: 'appscript',
+    tabNames,
+    tabSummaries,
+    isEmptySpreadsheet: tabSummaries.every((t) => t.isEmpty),
   };
 }
 

@@ -7,7 +7,7 @@ import {
   DailyRegisterClose,
   TaxSettings,
 } from '../../types';
-import { DailyCashAuditSummary } from '../../utils/dailyCashReconciliation';
+import { DailyCashAuditSummary, calculateDailyCashExamination } from '../../utils/dailyCashReconciliation';
 import {
   syncViaAppsScript,
   testAppsScriptUrl,
@@ -133,8 +133,10 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [isFetchingSheet, setIsFetchingSheet] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<GoogleSheetsImportData | null>(null);
+  const [emptySheetData, setEmptySheetData] = useState<GoogleSheetsImportData | null>(null);
   const [populateSuccess, setPopulateSuccess] = useState<string | null>(null);
   const [showDataDetails, setShowDataDetails] = useState(false);
+  const [showFormatGuide, setShowFormatGuide] = useState(false);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -381,10 +383,11 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         data.dailyCloses.length;
 
       if (totalFound === 0) {
-        setFetchError(
-          'Google Sheet was contacted successfully, but no sales or purchase rows were found. Make sure data is filled in the Sales Register or Purchase Invoices tabs.'
-        );
+        setEmptySheetData(data);
+        setFetchedData(null);
+        setFetchError(null);
       } else {
+        setEmptySheetData(null);
         setFetchedData(data);
         if (cleanUrl) {
           try {
@@ -400,11 +403,107 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      setEmptySheetData(null);
       setFetchError(
         `Failed to read Google Sheet: ${msg}. If using Apps Script, ensure your deployment Access is set to "Anyone". If sharing directly, make sure "Anyone with the link can view".`
       );
     } finally {
       setIsFetchingSheet(false);
+    }
+  };
+
+  const handlePopulateGoogleSheetFromTaxGuard = async () => {
+    const cleanUrl = appsScriptUrl.trim();
+    if (!cleanUrl) {
+      setSyncError('Please verify your Google Apps Script Web App URL.');
+      return;
+    }
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await syncViaAppsScript(cleanUrl, {
+        appsScriptUrl: cleanUrl,
+        existingSpreadsheetId: customSheetId.trim() || settings.googleSheetId,
+        settings,
+        sales,
+        purchases,
+        bankAccounts,
+        bankTransactions,
+        dailyCloses,
+        dailyCashAudit,
+      });
+
+      try {
+        localStorage.setItem(STORAGE_KEYS.SAVED_APPS_SCRIPT_URL, cleanUrl);
+        if (result.spreadsheetId) localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_ID, result.spreadsheetId);
+        if (result.spreadsheetUrl) localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_URL, result.spreadsheetUrl);
+        if (result.spreadsheetTitle) localStorage.setItem(STORAGE_KEYS.SAVED_GOOGLE_SHEET_NAME, result.spreadsheetTitle);
+      } catch {}
+
+      onUpdateSettings({
+        ...settings,
+        googleAppsScriptUrl: cleanUrl,
+        googleSheetId: result.spreadsheetId || settings.googleSheetId,
+        googleSheetUrl: result.spreadsheetUrl || settings.googleSheetUrl,
+        googleSheetName: result.spreadsheetTitle || settings.googleSheetName,
+        lastGoogleSheetSyncAt: result.syncedAt,
+        autoSyncToGoogleSheets: autoSyncEnabled,
+      });
+
+      setSyncResult(result);
+      setEmptySheetData(null);
+      setPopulateSuccess(
+        `Successfully populated your Google Sheet "${result.spreadsheetTitle}" with ${totalRecords} TaxGuard records across all 5 tabs!`
+      );
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleInitializeBlankTabs = async () => {
+    const cleanUrl = appsScriptUrl.trim();
+    if (!cleanUrl) return;
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await syncViaAppsScript(cleanUrl, {
+        appsScriptUrl: cleanUrl,
+        existingSpreadsheetId: customSheetId.trim() || settings.googleSheetId,
+        settings,
+        sales: [],
+        purchases: [],
+        bankAccounts:
+          bankAccounts.length > 0
+            ? bankAccounts
+            : [
+                {
+                  id: 'acc-cbe-main',
+                  name: 'Commercial Bank of Ethiopia (CBE)',
+                  bankName: 'CBE',
+                  accountNumberMasked: '•••• 4821',
+                  type: 'checking',
+                  currentBalance: 0,
+                  currency: settings.currency || 'ETB',
+                  color: '#ea580c',
+                },
+              ],
+        bankTransactions: [],
+        dailyCloses: [],
+        dailyCashAudit: calculateDailyCashExamination([], [], [], []),
+      });
+
+      setSyncResult(result);
+      setEmptySheetData(null);
+      setPopulateSuccess(
+        `Successfully created 5 standard blank tabs with headers in Google Sheet "${result.spreadsheetTitle}"! You can now open the sheet and enter your data.`
+      );
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -679,6 +778,116 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Connected but Empty Sheet Diagnostic & Resolver */}
+              {emptySheetData && (
+                <div className="p-4 rounded-xl bg-amber-50/90 border-2 border-amber-300 space-y-3.5 shadow-2xs animate-fade-in">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                        <FileSpreadsheet className="w-5 h-5 text-amber-100" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-xs font-bold text-amber-950">
+                            Google Sheet Connected Successfully!
+                          </h4>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Apps Script Online
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-900 mt-0.5 font-medium truncate">
+                          Sheet: {emptySheetData.spreadsheetTitle || emptySheetData.sourceSpreadsheetTitle || 'TaxGuard Financial Ledger'}
+                          {emptySheetData.tabNames && emptySheetData.tabNames.length > 0 && (
+                            <span className="text-stone-600 font-normal ml-1">
+                              (Tabs detected: {emptySheetData.tabNames.map((t) => `"${t}"`).join(', ')})
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-lg bg-white/95 border border-amber-200 text-xs text-stone-700 space-y-1.5">
+                    <div className="font-bold text-amber-950 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>No sales or purchase rows found in this sheet</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Your Google Sheet was contacted successfully, but currently has no data rows.
+                      If this is a fresh spreadsheet, you can push your TaxGuard financial records to it now, or setup blank formatted tabs.
+                    </p>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={handlePopulateGoogleSheetFromTaxGuard}
+                      disabled={isSyncing}
+                      className="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isSyncing ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Populating Google Sheet with Records...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-4 h-4 text-emerald-200" />
+                          <span>Populate &amp; Push TaxGuard Data into this Sheet (ወደ ሺት ላክ)</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button
+                        type="button"
+                        onClick={handleInitializeBlankTabs}
+                        disabled={isSyncing}
+                        className="flex-1 py-2 px-3 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-stone-800 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-stone-600" />
+                        <span>Setup 5 Blank Tabs with Headers (ባዶ ሰንጠረዦች)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowFormatGuide(!showFormatGuide)}
+                        className="py-2 px-3 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-stone-700 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5 text-amber-700" />
+                        <span>{showFormatGuide ? 'Hide Format Guide' : 'View Expected Columns'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expandable Column Format Guide */}
+                  {showFormatGuide && (
+                    <div className="p-3.5 rounded-xl bg-stone-900 text-emerald-300 text-[11px] font-mono space-y-2 max-h-56 overflow-y-auto">
+                      <div className="font-bold text-white text-xs font-sans">
+                        Expected Column Structure for Direct Spreadsheet Input:
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-amber-400 font-bold block">Tab: Sales Register (or &quot;Sheet1&quot; with Sales)</span>
+                        <span className="text-stone-300 text-[10px] block">
+                          Date | Receipt # | Customer Name | Payment Method | Gross Total | Cash | Bank Transfer | VAT Amount
+                        </span>
+                      </div>
+                      <div className="space-y-0.5 pt-1">
+                        <span className="text-blue-400 font-bold block">Tab: Purchase Invoices</span>
+                        <span className="text-stone-300 text-[10px] block">
+                          Date | Invoice # | Supplier Name | Supplier TIN | Category | Payment Method | Total Amount | VAT Amount
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-stone-400 font-sans pt-1 border-t border-stone-800">
+                        Tip: Click &quot;Populate &amp; Push TaxGuard Data&quot; above to automatically create all these tabs and headers with standard formulas!
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
