@@ -732,8 +732,8 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
             <span className="font-bold text-stone-800">
               {filteredSales.length} daily entries matching
             </span>
-            <span className="text-stone-500 font-tabular">
-              ({formatCurrency(totalSalesAmount, settings.currencySymbol)})
+            <span className="text-stone-500 font-tabular font-medium">
+              · {formatCurrency(totalSalesAmount, settings.currencySymbol)}
             </span>
           </div>
         )}

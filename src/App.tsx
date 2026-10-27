@@ -1,19 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  User,
-} from 'firebase/auth';
-import {
-  auth,
-  googleProvider,
-  signInWithGoogle,
-  getRedirectResult,
-  isMobileDevice,
-  isStandalonePWA,
-  isSessionStorageAccessible,
-} from './firebase';
 
 // Local stubs replacing Firestore database operations
 const db = {} as unknown;
@@ -79,9 +64,8 @@ import { TaxAuditEngine } from './components/audit/TaxAuditEngine';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
-import { GoogleSheetsSyncModal } from './components/sheets/GoogleSheetsSyncModal';
-import { syncViaAppsScript, GoogleSheetsImportData } from './services/googleSheetsService';
-import { CheckCircle2, Landmark, ShieldCheck, LogIn, HelpCircle, Sun, Moon, Smartphone, FileSpreadsheet } from 'lucide-react';
+import { syncViaAppsScript, fetchDataFromGoogleSheets, GoogleSheetsImportData } from './services/googleSheetsService';
+import { CheckCircle2, Landmark, ShieldCheck, HelpCircle, Sun, Moon, Smartphone } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
@@ -89,21 +73,49 @@ function sanitizeId(raw: string): string {
 }
 
 export default function App() {
-  // Firebase Auth state
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isLocalGuestMode, setIsLocalGuestMode] = useState(() => {
+  // Single-User Authentication State
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
     try {
-      const saved = localStorage.getItem('taxguard_guest_mode');
-      if (saved !== null) return saved === 'true';
-    } catch {}
-    return true; // Local phone ledger is primary (Firestore removed as database)
+      return localStorage.getItem('taxguard_logged_in') === 'true';
+    } catch {
+      return true;
+    }
   });
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const authUsername = localStorage.getItem('taxguard_username') || 'solomon';
+  const user = { uid: authUsername, email: `${authUsername}@local`, displayName: authUsername };
+  const [hasSettingsDoc, setHasSettingsDoc] = useState(true);
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    const validUser = localStorage.getItem('taxguard_username') || 'solomon';
+    const validPass = localStorage.getItem('taxguard_password') || 'solomon123';
+
+    if (usernameInput.trim().toLowerCase() === validUser.toLowerCase() && passwordInput === validPass) {
+      setIsLoggedIn(true);
+      try {
+        localStorage.setItem('taxguard_logged_in', 'true');
+      } catch {}
+      showToast(`Welcome back, ${validUser}!`);
+    } else {
+      setLoginError('Invalid username or password. Default is solomon / solomon123.');
+    }
+  };
+
+  const handleSignOut = () => {
+    setIsLoggedIn(false);
+    try {
+      localStorage.setItem('taxguard_logged_in', 'false');
+    } catch {}
+    showToast('Signed out successfully.');
+  };
 
   // Phone Local Storage initial hydration
-  const initialLocal = loadUserLocalData(null);
+  const initialLocal = loadUserLocalData(authUsername);
 
   // Primary financial state: initialized immediately from phone storage
   const [sales, setSales] = useState<SaleTransaction[]>(initialLocal.sales);
@@ -114,11 +126,10 @@ export default function App() {
   const [reconcilingItems, setReconcilingItems] = useState<ReconcilingItem[]>(initialLocal.reconcilingItems);
   const [brsStatements, setBrsStatements] = useState<BankReconciliationStatement[]>(initialLocal.brsStatements);
   const [settings, setSettings] = useState<TaxSettings>(initialLocal.settings);
-  const [hasSettingsDoc, setHasSettingsDoc] = useState(Boolean(initialLocal.settings.taxIdNumber));
 
   // Phone Local Storage & Sync Queue Status
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(getQuotaExceededFlag());
-  const [pendingSyncCount, setPendingSyncCount] = useState(() => getPendingSyncMutations(null).length);
+  const [pendingSyncCount, setPendingSyncCount] = useState(() => getPendingSyncMutations(authUsername).length);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Navigation & Modal triggers
@@ -138,8 +149,6 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAICopilotOpen, setIsAICopilotOpen] = useState(false);
-  const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
-  const [googleSheetsInitialTab, setGoogleSheetsInitialTab] = useState<'sync' | 'populate'>('sync');
   const [initialEditingSale, setInitialEditingSale] = useState<SaleTransaction | null>(null);
   const [initialEditingPurchase, setInitialEditingPurchase] = useState<PurchaseItem | null>(null);
 
@@ -193,122 +202,74 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // 1. Track Firebase Authentication state & sync queue
+  // Initial login & conflict resolution: pull latest data from Google Sheet if available
+  // Requirement 1 & 2: When logging in from a new device, do NOT push empty data. Perform read-only retrieval
+  // and force device to update local storage if remote sheet contains latest data.
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthReady(true);
-      const activeUid = currentUser?.uid || 'guest';
-      const localData = loadUserLocalData(activeUid);
-      if (localData.sales.length > 0) setSales(localData.sales);
-      if (localData.purchases.length > 0) {
-        setPurchases(localData.purchases);
-        hydratePurchasesImages(localData.purchases).then((hydrated) => setPurchases(hydrated)).catch(() => {});
-      }
-      if (localData.bankAccounts.length > 0) setBankAccounts(localData.bankAccounts);
-      if (localData.bankTransactions.length > 0) setBankTransactions(localData.bankTransactions);
-      if (localData.dailyCloses.length > 0) setDailyCloses(localData.dailyCloses);
-      if (localData.reconcilingItems.length > 0) setReconcilingItems(localData.reconcilingItems);
-      if (localData.brsStatements.length > 0) setBrsStatements(localData.brsStatements);
-      if (localData.settings.taxIdNumber) {
-        setSettings(localData.settings);
-        setHasSettingsDoc(true);
-      }
-      setPendingSyncCount(getPendingSyncMutations(currentUser?.uid).length);
+    if (!isLoggedIn || !navigator.onLine) return;
 
-      // 2. First-time sync to database and populate local storage, or background sync pending
-      if (currentUser && navigator.onLine) {
-        if (!hasDoneInitialCloudSync(currentUser.uid)) {
-          performFirstTimeCloudSync(currentUser.uid, (syncedData) => {
-            if (syncedData.sales) setSales(syncedData.sales);
-            if (syncedData.purchases) {
-              setPurchases(syncedData.purchases);
-              hydratePurchasesImages(syncedData.purchases)
-                .then((hydrated) => setPurchases(hydrated))
-                .catch(() => {});
-            }
-            if (syncedData.bankAccounts) setBankAccounts(syncedData.bankAccounts);
-            if (syncedData.bankTransactions) setBankTransactions(syncedData.bankTransactions);
-            if (syncedData.dailyCloses) setDailyCloses(syncedData.dailyCloses);
-            if (syncedData.reconcilingItems) setReconcilingItems(syncedData.reconcilingItems);
-            if (syncedData.brsStatements) setBrsStatements(syncedData.brsStatements);
-            if (syncedData.settings) {
-              setSettings(syncedData.settings);
-              setHasSettingsDoc(true);
-            }
-          })
-            .then((res) => {
-              if (res.success) {
-                showToast(res.message);
-                setIsQuotaExceeded(false);
-                setQuotaExceededFlag(false);
-              }
-              setPendingSyncCount(getPendingSyncMutations(currentUser.uid).length);
-            })
-            .catch(() => {});
-        } else {
-          syncPendingToFirestore(currentUser.uid)
-            .then((res) => {
-              if (res.success && res.syncedCount > 0) {
-                showToast(`Synced ${res.syncedCount} pending local record(s) to online database.`);
-                setIsQuotaExceeded(false);
-                setQuotaExceededFlag(false);
-              }
-              setPendingSyncCount(getPendingSyncMutations(currentUser.uid).length);
-            })
-            .catch(() => {});
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
+    const activeUser = localStorage.getItem('taxguard_username') || 'solomon';
+    const currentLocal = loadUserLocalData(activeUser);
+    const cleanUrl = currentLocal.settings.googleAppsScriptUrl?.trim() || settings.googleAppsScriptUrl?.trim();
 
-  // Check for redirect result on app mount (crucial for Android when popups redirect)
-  useEffect(() => {
-    if (!isSessionStorageAccessible()) {
-      return;
-    }
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result?.user) {
-          setUser(result.user);
-          showToast(`Welcome back, ${result.user.displayName || result.user.email}!`);
+    if (!cleanUrl) return;
+
+    fetchDataFromGoogleSheets({ appsScriptUrl: cleanUrl, settings: currentLocal.settings })
+      .then((imported) => {
+        if (!imported) return;
+        const remoteHasRecords = imported.sales.length > 0 || imported.purchases.length > 0;
+        if (!remoteHasRecords) return;
+
+        const localIsEmpty = currentLocal.sales.length === 0 && currentLocal.purchases.length === 0;
+        const remoteHasMore =
+          imported.sales.length > currentLocal.sales.length ||
+          imported.purchases.length > currentLocal.purchases.length;
+
+        if (localIsEmpty || remoteHasMore) {
+          if (imported.sales.length > 0) {
+            setSales(imported.sales);
+            saveUserLocalCollection('sales', imported.sales, activeUser);
+          }
+          if (imported.purchases.length > 0) {
+            setPurchases(imported.purchases);
+            saveUserLocalCollection('purchases', imported.purchases, activeUser);
+          }
+          if (imported.bankAccounts.length > 0) {
+            setBankAccounts(imported.bankAccounts);
+            saveUserLocalCollection('bankAccounts', imported.bankAccounts, activeUser);
+          }
+          if (imported.bankTransactions.length > 0) {
+            setBankTransactions(imported.bankTransactions);
+            saveUserLocalCollection('bankTransactions', imported.bankTransactions, activeUser);
+          }
+          if (imported.dailyCloses.length > 0) {
+            setDailyCloses(imported.dailyCloses);
+            saveUserLocalCollection('dailyCloses', imported.dailyCloses, activeUser);
+          }
+          if (imported.settings && Object.keys(imported.settings).length > 0) {
+            const merged = { ...currentLocal.settings, ...imported.settings };
+            setSettings(merged);
+            saveUserLocalSettings(merged, activeUser);
+          }
+          setLastAutoSyncTime(new Date().toISOString());
+          showToast('Updated local storage with latest ledger data from cloud.');
         }
       })
       .catch((err) => {
-        console.warn('Redirect sign-in error:', err);
-        const code = (err as { code?: string })?.code;
-        if (code !== 'auth/popup-closed-by-user' && code !== 'auth/missing-initial-state') {
-          setAuthError(err instanceof Error ? err.message : 'Google sign-in via redirect failed');
-        }
+        console.warn('Quiet cloud fetch error:', err);
       });
-  }, []);
+  }, [isLoggedIn]);
 
-  // Background sync on connection restored
-  useEffect(() => {
-    const handleOnline = () => {
-      if (user) {
-        syncPendingToFirestore(user.uid)
-          .then((res) => {
-            if (res.success && res.syncedCount > 0) {
-              showToast(`Synced ${res.syncedCount} pending changes to online database!`);
-              setIsQuotaExceeded(false);
-              setQuotaExceededFlag(false);
-            }
-            setPendingSyncCount(getPendingSyncMutations(user.uid).length);
-          })
-          .catch(() => {});
-      }
-    };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [user]);
-
-  // Automatically sync to Google Sheets via Apps Script Web App when financial data changes
+  // Quiet background auto-sync to Google Sheets via Apps Script Web App when financial data changes
   useEffect(() => {
     // Avoid triggering sync on initial render hydration
     if (isFirstMountRef.current) {
       isFirstMountRef.current = false;
+      return;
+    }
+
+    // Protection: never overwrite remote Google Sheet with empty tables from a fresh device
+    if (sales.length === 0 && purchases.length === 0) {
       return;
     }
 
@@ -323,7 +284,7 @@ export default function App() {
       clearTimeout(autoSyncTimeoutRef.current);
     }
 
-    // Debounce 3.5 seconds after the user's latest interaction to batch edits into single Apps Script request
+    // Debounce 3.5 seconds after user edit
     autoSyncTimeoutRef.current = setTimeout(async () => {
       if (isAutoSyncingRef.current) return;
 
@@ -366,14 +327,14 @@ export default function App() {
               googleSheetUrl: res.spreadsheetUrl || prev.googleSheetUrl,
               googleSheetName: res.spreadsheetTitle || prev.googleSheetName,
             };
-            saveUserLocalSettings(updated, user?.uid);
+            saveUserLocalSettings(updated, authUsername);
             return updated;
           });
         } else {
           setAutoSyncStatus('error');
         }
       } catch (err) {
-        console.warn('Auto-sync to Google Sheets failed:', err);
+        console.warn('Quiet background sync failed:', err);
         setAutoSyncStatus('error');
       } finally {
         isAutoSyncingRef.current = false;
@@ -400,9 +361,10 @@ export default function App() {
     settings.autoSyncToGoogleSheets,
   ]);
 
-  // Background auto-sync to Google Sheets upon network reconnection
+  // Background auto-sync upon network reconnection
   useEffect(() => {
     const handleReconnected = () => {
+      if (sales.length === 0 && purchases.length === 0) return;
       const cleanUrl = settings.googleAppsScriptUrl?.trim();
       const isAutoSyncEnabled = settings.autoSyncToGoogleSheets !== false;
 
@@ -440,7 +402,7 @@ export default function App() {
                   googleSheetUrl: res.spreadsheetUrl || prev.googleSheetUrl,
                   googleSheetName: res.spreadsheetTitle || prev.googleSheetName,
                 };
-                saveUserLocalSettings(updated, user?.uid);
+                saveUserLocalSettings(updated, authUsername);
                 return updated;
               });
             }
@@ -456,79 +418,48 @@ export default function App() {
 
     window.addEventListener('online', handleReconnected);
     return () => window.removeEventListener('online', handleReconnected);
-  }, [sales, purchases, bankAccounts, bankTransactions, dailyCloses, settings, user?.uid]);
+  }, [sales, purchases, bankAccounts, bankTransactions, dailyCloses, settings, authUsername]);
 
-  // On-demand cloud refresh: pulls latest data from remote Firestore and updates local storage
+  // On-demand refresh: pulls latest data quietly and updates local storage
   const handleRefreshFromCloud = async () => {
-    if (!user) {
-      showToast('Please sign in with Google to sync with cloud database.');
+    const cleanUrl = settings.googleAppsScriptUrl?.trim();
+    if (!cleanUrl) {
+      showToast('No cloud synchronization URL configured in settings.');
       return;
     }
-    showToast('Syncing with online database...');
+    showToast('Checking for latest updates...');
     try {
-      const res = await performFirstTimeCloudSync(
-        user.uid,
-        (syncedData) => {
-          if (syncedData.sales) setSales(syncedData.sales);
-          if (syncedData.purchases) {
-            setPurchases(syncedData.purchases);
-            hydratePurchasesImages(syncedData.purchases)
-              .then((hydrated) => setPurchases(hydrated))
-              .catch(() => {});
-          }
-          if (syncedData.bankAccounts) setBankAccounts(syncedData.bankAccounts);
-          if (syncedData.bankTransactions) setBankTransactions(syncedData.bankTransactions);
-          if (syncedData.dailyCloses) setDailyCloses(syncedData.dailyCloses);
-          if (syncedData.reconcilingItems) setReconcilingItems(syncedData.reconcilingItems);
-          if (syncedData.brsStatements) setBrsStatements(syncedData.brsStatements);
-          if (syncedData.settings) {
-            setSettings(syncedData.settings);
-            setHasSettingsDoc(true);
-          }
-        },
-        true /* force */
-      );
-      if (res.success) {
-        showToast(res.message);
-        setIsQuotaExceeded(false);
-        setQuotaExceededFlag(false);
+      const imported = await fetchDataFromGoogleSheets({ appsScriptUrl: cleanUrl, settings });
+      if (imported && (imported.sales.length > 0 || imported.purchases.length > 0)) {
+        if (imported.sales.length > 0) {
+          setSales(imported.sales);
+          saveUserLocalCollection('sales', imported.sales, authUsername);
+        }
+        if (imported.purchases.length > 0) {
+          setPurchases(imported.purchases);
+          saveUserLocalCollection('purchases', imported.purchases, authUsername);
+        }
+        if (imported.bankAccounts.length > 0) {
+          setBankAccounts(imported.bankAccounts);
+          saveUserLocalCollection('bankAccounts', imported.bankAccounts, authUsername);
+        }
+        if (imported.bankTransactions.length > 0) {
+          setBankTransactions(imported.bankTransactions);
+          saveUserLocalCollection('bankTransactions', imported.bankTransactions, authUsername);
+        }
+        if (imported.dailyCloses.length > 0) {
+          setDailyCloses(imported.dailyCloses);
+          saveUserLocalCollection('dailyCloses', imported.dailyCloses, authUsername);
+        }
+        showToast('Local ledger updated with latest records.');
       } else {
-        showToast(res.message);
+        showToast('Local ledger is already up to date.');
       }
-      setPendingSyncCount(getPendingSyncMutations(user.uid).length);
-    } catch (err) {
-      console.warn('Manual sync failed:', err);
+    } catch {
+      showToast('Could not reach cloud backup. Check network connection.');
     }
   };
 
-  const handleSignIn = async (preferRedirect = false) => {
-    setAuthError(null);
-    setIsSigningIn(true);
-    try {
-      const signedInUser = await signInWithGoogle({ preferRedirect });
-      if (signedInUser) {
-        showToast(`Welcome, ${signedInUser.displayName || signedInUser.email}!`);
-      }
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code === 'auth/popup-closed-by-user') {
-        // User intentionally closed popup, ignore
-      } else {
-        setAuthError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
-      }
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      showToast('Signed out.');
-    } catch (err) {
-      console.error('Sign out error:', err);
-    }
-  };
 
   // Action completion helper (local storage is primary, Firestore database removed)
   const safeWrite = async (
@@ -3023,18 +2954,7 @@ export default function App() {
     downloadDirectly();
   };
 
-  if (!isAuthReady) {
-    return (
-      <div className="min-h-screen bg-[#F8F7F4] flex items-center justify-center p-6">
-        <div className="text-center space-y-2">
-          <div className="w-8 h-8 border-2 border-orange-700 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-medium text-stone-600">Loading ledger data...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user && !isLocalGuestMode) {
+  if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#F8F7F4] dark:bg-stone-950 text-stone-900 dark:text-stone-100 flex flex-col justify-center items-center p-6">
         <div className="w-full max-w-md bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-8 shadow-sm space-y-6">
@@ -3080,81 +3000,51 @@ export default function App() {
               Solomon Building Materials Shop
             </h1>
             <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
-              Record daily sales, purchase VAT invoices, and certified Bank Reconciliation Statements (BRS). All financial data is safeguarded in phone local storage and can be backed up to Google Sheets.
+              Log in with your username and password to access your local ledger and tax records.
             </p>
           </div>
 
-          {authError && (
+          {loginError && (
             <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-300">
-              {authError}
+              {loginError}
             </div>
           )}
 
-          <div className="space-y-2.5">
-            {/* Primary Google Sign-in with Auto-fallback */}
-            <button
-              onClick={() => handleSignIn(false)}
-              disabled={isSigningIn}
-              className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl bg-orange-700 hover:bg-orange-800 text-white text-sm font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-60"
-            >
-              {isSigningIn ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
-                  <span>Connecting to Google Account...</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4 shrink-0 bg-white rounded-full p-0.5" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  <span>Sign in with Google (Online Sync)</span>
-                </>
-              )}
-            </button>
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300">Username</label>
+              <input
+                type="text"
+                required
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl bg-stone-50 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-sm text-stone-900 dark:text-stone-100 focus:outline-none focus:border-orange-700"
+                placeholder="solomon"
+              />
+            </div>
 
-            {/* Android Fullscreen Redirect Alternative */}
-            <button
-              onClick={() => handleSignIn(true)}
-              disabled={isSigningIn}
-              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium text-stone-600 dark:text-stone-300 hover:text-orange-700 dark:hover:text-orange-400 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors cursor-pointer"
-            >
-              <span>Android Redirect Sign-in (If Popups Blocked)</span>
-            </button>
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300">Password</label>
+              <input
+                type="password"
+                required
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl bg-stone-50 dark:bg-stone-800 border border-stone-300 dark:border-stone-700 text-sm text-stone-900 dark:text-stone-100 font-mono focus:outline-none focus:border-orange-700"
+                placeholder="••••••••"
+              />
+            </div>
 
-            {/* Phone Local Storage Guest Mode */}
             <button
-              onClick={() => {
-                setIsLocalGuestMode(true);
-                try {
-                  localStorage.setItem('taxguard_guest_mode', 'true');
-                } catch {}
-                showToast('Phone Local Storage Mode activated.');
-              }}
-              className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-800 dark:text-stone-200 text-sm font-semibold transition-colors cursor-pointer"
+              type="submit"
+              className="w-full py-3 px-4 rounded-xl bg-orange-700 hover:bg-orange-800 text-white text-sm font-semibold transition-all cursor-pointer shadow-sm"
             >
-              <Smartphone className="w-4 h-4 text-orange-700 dark:text-orange-400" />
-              <span>Continue in Phone Local Mode (Offline Ready)</span>
+              Sign In to Ledger
             </button>
-          </div>
+          </form>
 
-          <div className="pt-4 border-t border-stone-100 dark:border-stone-800 flex items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
-            <ShieldCheck className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
-            <span>Zero-Trust Cloud Firestore security rules with instant offline persistence.</span>
+          <div className="pt-3 border-t border-stone-100 dark:border-stone-800 text-[11px] text-stone-500 dark:text-stone-400 text-center">
+            Default Login: <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon</code> / <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon123</code>
           </div>
         </div>
 
@@ -3171,8 +3061,7 @@ export default function App() {
   const unreconciledBankCount = bankTransactions.filter((tx) => !tx.isReconciled).length;
 
   const handleReloadFromLocalStorage = () => {
-    const activeUid = user?.uid || (isLocalGuestMode ? 'guest' : null);
-    const local = loadUserLocalData(activeUid);
+    const local = loadUserLocalData(authUsername);
     setSales(local.sales);
     setPurchases(local.purchases);
     setBankAccounts(local.bankAccounts);
@@ -3183,7 +3072,7 @@ export default function App() {
     if (local.settings.taxIdNumber) {
       setSettings(local.settings);
     }
-    setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
+    setPendingSyncCount(getPendingSyncMutations(authUsername).length);
     showToast('Local phone data refreshed!');
   };
 
@@ -3214,23 +3103,9 @@ export default function App() {
         setActiveTab('purchases');
         setIsAddPurchaseOpen(true);
       }}
-      onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
-      userEmail={user?.email || (isLocalGuestMode ? '📱 Phone Local Storage Active' : undefined)}
-      userName={user?.displayName || (isLocalGuestMode ? 'Guest Offline Mode' : undefined)}
-      userPhoto={user?.photoURL || undefined}
-      onSignInGoogle={() => handleSignIn(false)}
-      onRefreshFromCloud={handleRefreshFromCloud}
-      onSignOut={() => {
-        if (user) {
-          handleSignOut();
-        } else {
-          setIsLocalGuestMode(false);
-          try {
-            localStorage.removeItem('taxguard_guest_mode');
-          } catch {}
-          showToast('Closed Phone Local Session.');
-        }
-      }}
+      userEmail={`${authUsername} (Single User)`}
+      userName={authUsername}
+      onSignOut={handleSignOut}
       unreconciledBankCount={unreconciledBankCount}
       auditIssuesCount={auditReport.issues.length}
       theme={theme}
@@ -3262,14 +3137,6 @@ export default function App() {
           setActiveTab={setActiveTab}
           autoSyncStatus={autoSyncStatus}
           lastAutoSyncTime={lastAutoSyncTime}
-          onOpenGoogleSheets={() => {
-            setGoogleSheetsInitialTab('sync');
-            setIsGoogleSheetsModalOpen(true);
-          }}
-          onOpenPopulateGoogleSheets={() => {
-            setGoogleSheetsInitialTab('populate');
-            setIsGoogleSheetsModalOpen(true);
-          }}
           onOpenAddSale={() => {
             setInitialEditingSale(null);
             setActiveTab('sales');
@@ -3403,23 +3270,6 @@ export default function App() {
         onResetData={handleResetData}
         theme={theme}
         onSetTheme={setTheme}
-        onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
-      />
-
-      {/* Google Sheets Dual-Storage & Cloud Sync Modal */}
-      <GoogleSheetsSyncModal
-        isOpen={isGoogleSheetsModalOpen}
-        onClose={() => setIsGoogleSheetsModalOpen(false)}
-        settings={settings}
-        onUpdateSettings={handleSaveSettings}
-        sales={sales}
-        purchases={purchases}
-        bankAccounts={bankAccounts}
-        bankTransactions={bankTransactions}
-        dailyCloses={dailyCloses}
-        dailyCashAudit={calculateDailyCashExamination(sales, purchases, bankTransactions, dailyCloses)}
-        initialTab={googleSheetsInitialTab}
-        onPopulateData={handlePopulateFromGoogleSheets}
       />
 
       {/* How to Use Guide Modal */}
@@ -3433,8 +3283,8 @@ export default function App() {
       <LocalStorageSyncModal
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
-        uid={user?.uid || (isLocalGuestMode ? 'guest' : null)}
-        userEmail={user?.email || (isLocalGuestMode ? 'Local Phone Ledger' : null)}
+        uid={authUsername}
+        userEmail={`${authUsername} (Single User)`}
         onDataRestored={handleReloadFromLocalStorage}
         onPullFromCloud={handleRefreshFromCloud}
       />

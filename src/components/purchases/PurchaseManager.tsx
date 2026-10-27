@@ -732,8 +732,8 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             <span className="font-bold text-stone-800">
               {filteredPurchases.length} invoices matching
             </span>
-            <span className="text-stone-500 font-tabular">
-              ({formatCurrency(totalPurchasedAmount, settings.currencySymbol)})
+            <span className="text-stone-500 font-tabular font-medium">
+              · {formatCurrency(totalPurchasedAmount, settings.currencySymbol)}
             </span>
           </div>
         )}

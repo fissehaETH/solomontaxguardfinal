@@ -409,7 +409,7 @@ export const BankReconciliationSheet: React.FC<BankReconciliationSheetProps> = (
             >
               {bankAccounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.bankName} — {acc.accountNumberMasked} ({formatCurrency(acc.currentBalance, settings.currencySymbol)})
+                  {acc.bankName} — {acc.accountNumberMasked} — {formatCurrency(acc.currentBalance, settings.currencySymbol)}
                 </option>
               ))}
             </select>

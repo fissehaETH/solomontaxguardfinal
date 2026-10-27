@@ -109,7 +109,7 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
     ['Generated On', nowIso],
     ['Business Name', settings.businessName || 'Business Ledger'],
     ['Tax ID / TIN Number', settings.taxIdNumber || 'N/A'],
-    ['Currency', `${settings.currency} (${settings.currencySymbol})`],
+    ['Currency', `${(settings.currency || 'ETB').replace(/[()]/g, '').trim()}`],
     ['', ''],
     ['KEY TAX & FINANCIAL METRICS', 'AMOUNT'],
     ['Gross Sales Revenue', totalSales],
@@ -767,12 +767,11 @@ export function parseSpreadsheetSheets(
       } else if (key.includes('tax id') || key.includes('tin')) {
         importedSettings.taxIdNumber = String(val).trim();
       } else if (key.includes('currency') && !key.includes('symbol')) {
-        const rawCurr = String(val).trim();
-        const code = rawCurr.slice(0, 5).trim();
-        if (code) {
-          importedSettings.currency = code;
-          importedSettings.currencySymbol = `${code} `;
-        }
+        const rawCurr = String(val).replace(/[()]/g, '').trim();
+        const match = rawCurr.match(/[A-Z]{3}|\$|€|£|₹|₦|ETB/i);
+        const code = (match ? match[0] : rawCurr.split(' ')[0]).trim() || 'ETB';
+        importedSettings.currency = code;
+        importedSettings.currencySymbol = `${code} `;
       }
     }
   }

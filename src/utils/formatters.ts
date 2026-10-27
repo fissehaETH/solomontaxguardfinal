@@ -22,14 +22,14 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
 
 export const CURRENCY_OPTIONS = [
   { code: 'ETB', symbol: 'ETB ', name: 'Ethiopian Birr (ETB / Br)' },
-  { code: 'USD', symbol: '$', name: 'US Dollar ($)' },
-  { code: 'EUR', symbol: '€', name: 'Euro (€)' },
-  { code: 'GBP', symbol: '£', name: 'British Pound (£)' },
+  { code: 'USD', symbol: '$ ', name: 'US Dollar ($)' },
+  { code: 'EUR', symbol: '€ ', name: 'Euro (€)' },
+  { code: 'GBP', symbol: '£ ', name: 'British Pound (£)' },
   { code: 'KES', symbol: 'KSh ', name: 'Kenyan Shilling (KSh)' },
-  { code: 'NGN', symbol: '₦', name: 'Nigerian Naira (₦)' },
+  { code: 'NGN', symbol: '₦ ', name: 'Nigerian Naira (₦)' },
   { code: 'ZAR', symbol: 'R ', name: 'South African Rand (R)' },
   { code: 'AED', symbol: 'AED ', name: 'UAE Dirham (AED)' },
-  { code: 'INR', symbol: '₹', name: 'Indian Rupee (₹)' },
+  { code: 'INR', symbol: '₹ ', name: 'Indian Rupee (₹)' },
 ];
 
 export function formatCurrency(amount: number, symbol = 'ETB '): string {
@@ -39,7 +39,10 @@ export function formatCurrency(amount: number, symbol = 'ETB '): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return `${isNegative ? '-' : ''}${symbol}${formatted}`;
+  // Strip any accidental parenthesis from symbol (e.g. "ETB (" -> "ETB")
+  const cleanSymbol = (symbol || 'ETB').replace(/[()]/g, '').trim();
+  const displaySymbol = cleanSymbol ? `${cleanSymbol} ` : '';
+  return `${isNegative ? '-' : ''}${displaySymbol}${formatted}`;
 }
 
 export function formatDate(dateString: string): string {

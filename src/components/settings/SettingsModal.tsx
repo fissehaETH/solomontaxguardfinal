@@ -28,9 +28,67 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [formData, setFormData] = useState<TaxSettings>({ ...settings });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
 
+  const [currentUsername, setCurrentUsername] = useState(() => {
+    try {
+      return localStorage.getItem('taxguard_username') || 'solomon';
+    } catch {
+      return 'solomon';
+    }
+  });
+  const [newUsername, setNewUsername] = useState(currentUsername);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+
   React.useEffect(() => {
     setFormData({ ...settings });
+    try {
+      const u = localStorage.getItem('taxguard_username') || 'solomon';
+      setCurrentUsername(u);
+      setNewUsername(u);
+    } catch {}
+    setAuthError(null);
+    setAuthSuccess(null);
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
   }, [settings, isOpen]);
+
+  const handleUpdateCredentials = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    const savedPass = localStorage.getItem('taxguard_password') || 'solomon123';
+    if (currentPasswordInput !== savedPass) {
+      setAuthError('Current password is incorrect.');
+      return;
+    }
+
+    if (newPasswordInput && newPasswordInput !== confirmPasswordInput) {
+      setAuthError('New passwords do not match.');
+      return;
+    }
+
+    if (newUsername.trim()) {
+      try {
+        localStorage.setItem('taxguard_username', newUsername.trim());
+        setCurrentUsername(newUsername.trim());
+      } catch {}
+    }
+    if (newPasswordInput.trim()) {
+      try {
+        localStorage.setItem('taxguard_password', newPasswordInput.trim());
+      } catch {}
+    }
+
+    setAuthSuccess('Username and password updated successfully!');
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,121 +248,76 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        {/* Google Sheets Dual Storage Settings */}
+        {/* Username & Password Security Settings */}
         <div className="space-y-3 pt-3 border-t border-stone-200">
           <label className="block text-xs font-semibold text-stone-700">
-            Cloud Spreadsheet Storage (Google Sheets)
+            Login Credentials (Username &amp; Password)
           </label>
-          <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 space-y-2 text-xs">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-stone-900">
-                    {formData.googleSheetName || 'Google Sheets Dual Storage'}
-                  </h4>
-                  <p className="text-[11px] text-stone-500">
-                    Syncs Sales, Purchases, Bank Accounts, and Cash Audits into Google Drive
-                  </p>
-                </div>
+          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-3 text-xs">
+            {authError && (
+              <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-800 text-[11px]">
+                {authError}
               </div>
-              {formData.googleSheetUrl && (
-                <a
-                  href={formData.googleSheetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold hover:underline shrink-0"
-                >
-                  <span>Open Sheet</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
+            )}
+            {authSuccess && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px]">
+                {authSuccess}
+              </div>
+            )}
+
+            <div>
+              <span className="text-stone-600 block mb-1">Username</span>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-900 text-xs focus:outline-none focus:border-orange-700 font-medium"
+                placeholder="solomon"
+              />
             </div>
 
-            {formData.googleAppsScriptUrl ? (
-              <div className="text-[11px] text-stone-600 space-y-2 pt-2 border-t border-emerald-200/60">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-semibold text-emerald-950 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>Apps Script Web App Connected</span>
-                  </span>
-                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-emerald-100 text-emerald-800">
-                    Apps Script
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between pt-1">
-                  <div>
-                    <span className="font-medium text-stone-800 block text-xs">
-                      Automatic Sync to Sheets
-                    </span>
-                    <span className="text-[10px] text-stone-500">
-                      Syncs records automatically in background
-                    </span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.autoSyncToGoogleSheets !== false}
-                      onChange={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          autoSyncToGoogleSheets: e.target.checked,
-                        }))
-                      }
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-stone-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-                  </label>
-                </div>
-
-                {formData.lastGoogleSheetSyncAt && (
-                  <div className="flex justify-between text-[10px] text-emerald-700 pt-1 border-t border-emerald-200/40">
-                    <span>Last Synced:</span>
-                    <span>{new Date(formData.lastGoogleSheetSyncAt).toLocaleString()}</span>
-                  </div>
-                )}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <span className="text-stone-600 block mb-1">Current Password</span>
+                <input
+                  type="password"
+                  value={currentPasswordInput}
+                  onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-900 text-xs focus:outline-none focus:border-orange-700 font-mono"
+                  placeholder="••••••••"
+                />
               </div>
-            ) : formData.googleSheetId ? (
-              <div className="text-[11px] text-stone-600 space-y-0.5 pt-1 border-t border-emerald-200/60">
-                <div className="flex justify-between font-mono text-[10px]">
-                  <span>Sheet ID:</span>
-                  <span className="text-stone-700">{formData.googleSheetId.slice(0, 16)}...</span>
-                </div>
-                {formData.lastGoogleSheetSyncAt && (
-                  <div className="flex justify-between text-[10px] text-emerald-700">
-                    <span>Last Synced:</span>
-                    <span>{new Date(formData.lastGoogleSheetSyncAt).toLocaleString()}</span>
-                  </div>
-                )}
+              <div>
+                <span className="text-stone-600 block mb-1">New Password (Optional)</span>
+                <input
+                  type="password"
+                  value={newPasswordInput}
+                  onChange={(e) => setNewPasswordInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-900 text-xs focus:outline-none focus:border-orange-700 font-mono"
+                  placeholder="••••••••"
+                />
               </div>
-            ) : (
-              <p className="text-[11px] text-stone-600">
-                Sync all financial records and tax audits directly to your Google Sheet via Google Apps Script Web App.
-              </p>
-            )}
+              <div>
+                <span className="text-stone-600 block mb-1">Confirm New Password</span>
+                <input
+                  type="password"
+                  value={confirmPasswordInput}
+                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white border border-stone-300 text-stone-900 text-xs focus:outline-none focus:border-orange-700 font-mono"
+                  placeholder="••••••••"
+                />
+              </div>
+            </div>
 
-            {onOpenGoogleSheets && (
-              <div className="pt-1 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenGoogleSheets();
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>
-                    {formData.googleAppsScriptUrl || formData.googleSheetId
-                      ? 'Manage Google Sheets Sync'
-                      : 'Connect Google Sheets'}
-                  </span>
-                </button>
-              </div>
-            )}
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={handleUpdateCredentials}
+                className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-900 text-white font-semibold text-xs transition cursor-pointer"
+              >
+                Update Login Credentials
+              </button>
+            </div>
           </div>
         </div>
 

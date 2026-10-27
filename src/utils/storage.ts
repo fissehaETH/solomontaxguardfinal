@@ -100,8 +100,8 @@ export function loadFromStorage<T>(key: string, fallback: T): T {
 
     if (key.includes('settings') && parsed && typeof parsed === 'object') {
       parsed.businessName = parsed.businessName || 'Solomon Building Materials Shop';
-      parsed.currency = parsed.currency || 'ETB';
-      parsed.currencySymbol = parsed.currencySymbol || 'ETB ';
+      parsed.currency = (parsed.currency || 'ETB').replace(/[()]/g, '').trim() || 'ETB';
+      parsed.currencySymbol = `${(parsed.currencySymbol || 'ETB').replace(/[()]/g, '').trim()} `;
       parsed.defaultSalesTaxRate = parsed.defaultSalesTaxRate ?? 0.15;
     }
     return parsed;
@@ -350,9 +350,14 @@ export function saveUserLocalCollection<T>(
 }
 
 export function saveUserLocalSettings(settings: TaxSettings, uid?: string | null): void {
+  const sanitizedSettings: TaxSettings = {
+    ...settings,
+    currency: (settings.currency || 'ETB').replace(/[()]/g, '').trim() || 'ETB',
+    currencySymbol: `${(settings.currencySymbol || 'ETB').replace(/[()]/g, '').trim()} `,
+  };
   const targetKey = getKey(STORAGE_KEYS.SETTINGS, uid);
-  saveToStorage(targetKey, settings);
-  idbSet(targetKey, settings).catch(() => {});
+  saveToStorage(targetKey, sanitizedSettings);
+  idbSet(targetKey, sanitizedSettings).catch(() => {});
 
   // Persist Google Sheets config permanently across user resets and clears
   try {

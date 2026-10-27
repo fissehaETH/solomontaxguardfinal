@@ -78,7 +78,7 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
 
       setSyncFeedback({
         type: 'success',
-        message: 'All financial records are securely saved in local device storage! You can also sync to Google Sheets anytime via the Google Sheets modal.',
+        message: 'All financial records are securely synchronized and backed up!',
       });
     } catch {
       setSyncFeedback({
