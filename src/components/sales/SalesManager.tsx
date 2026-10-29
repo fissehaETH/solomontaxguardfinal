@@ -93,7 +93,6 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
   const [saleDate, setSaleDate] = useState(today);
   const [receiptRange, setReceiptRange] = useState(`DS-${today}`);
   const [totalDailyAmount, setTotalDailyAmount] = useState<number>(0);
-  const [dailyCashAmount, setDailyCashAmount] = useState<number>(0);
   const [dailyTransferAmount, setDailyTransferAmount] = useState<number>(0);
   const [isAppendMode, setIsAppendMode] = useState<boolean>(false);
   const [taxMode, setTaxMode] = useState<'inclusive' | 'exclusive'>('inclusive');
@@ -123,11 +122,10 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
 
       const tot = typeof parsed.totalAmount === 'number' && parsed.totalAmount > 0 ? parsed.totalAmount : 0;
       const trf = typeof parsed.bankTransferAmount === 'number' ? parsed.bankTransferAmount : 0;
-      const csh = typeof parsed.cashAmount === 'number' ? parsed.cashAmount : Math.max(0, tot - trf);
+      const autoCash = Math.max(0, tot - trf);
 
       setTotalDailyAmount(tot);
       setDailyTransferAmount(trf);
-      setDailyCashAmount(csh);
 
       if (parsed.date) {
         setSaleDate(normalizeDateString(parsed.date));
@@ -139,7 +137,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
         setNotes((prev) => (prev ? `${prev} · ${parsed.notes}` : parsed.notes || ''));
       }
       setAiSaleNotice(
-        `AI successfully parsed: Total ${formatCurrency(tot, settings.currencySymbol)} (Cash: ${formatCurrency(csh, settings.currencySymbol)}, Transfer: ${formatCurrency(trf, settings.currencySymbol)})`
+        `AI parsed: Total ${formatCurrency(tot, settings.currencySymbol)}, Transfer ${formatCurrency(trf, settings.currencySymbol)} → Auto Cash: ${formatCurrency(autoCash, settings.currencySymbol)}`
       );
       setAiPromptInput('');
       setIsAIPanelOpen(false);
@@ -166,9 +164,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
     setReceiptRange(sale.receiptNumber);
     setTotalDailyAmount(sale.totalAmount);
     const trf = getSaleBankTransferAmount(sale);
-    const csh = getSaleCashAmount(sale);
     setDailyTransferAmount(trf);
-    setDailyCashAmount(csh);
     setIsAppendMode(false);
     setTaxMode('inclusive');
     setTaxRatePercent(Math.round((sale.taxRate || settings.defaultSalesTaxRate) * 100));
@@ -189,7 +185,6 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
     setSaleDate(today);
     setReceiptRange(`DS-${today}`);
     setTotalDailyAmount(0);
-    setDailyCashAmount(0);
     setDailyTransferAmount(0);
     setIsAppendMode(false);
     setTaxMode('inclusive');
@@ -345,33 +340,21 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
   );
   const existingTodaySale = sales.find((s) => s.date === today);
 
-  // Synchronized field setters for intuitive entry
-  const handleCashChange = (newCash: number) => {
-    const safeCash = Math.max(0, newCash);
-    setDailyCashAmount(safeCash);
-    setTotalDailyAmount(Number((safeCash + dailyTransferAmount).toFixed(2)));
-  };
-
+  // Amount entry setters: User enters Total Daily Sales and Bank Transfer Sales
   const handleTransferChange = (newTransfer: number) => {
-    const safeTransfer = Math.max(0, newTransfer);
-    setDailyTransferAmount(safeTransfer);
-    setTotalDailyAmount(Number((dailyCashAmount + safeTransfer).toFixed(2)));
+    setDailyTransferAmount(Math.max(0, newTransfer));
   };
 
   const handleTotalChange = (newTotal: number) => {
-    const safeTotal = Math.max(0, newTotal);
-    setTotalDailyAmount(safeTotal);
-    setDailyCashAmount(Math.max(0, Number((safeTotal - dailyTransferAmount).toFixed(2))));
+    setTotalDailyAmount(Math.max(0, newTotal));
   };
 
   const handleQuickSetAllCash = () => {
     setDailyTransferAmount(0);
-    setDailyCashAmount(totalDailyAmount);
   };
 
   const handleQuickSetAllTransfer = () => {
-    setDailyTransferAmount(totalDailyAmount);
-    setDailyCashAmount(0);
+    setDailyTransferAmount(calculatedTotal);
   };
 
   const handleSaveSale = (e: React.FormEvent) => {
@@ -486,7 +469,6 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
     setEditingSale(null);
     setIsAddSaleOpen(false);
     setTotalDailyAmount(0);
-    setDailyCashAmount(0);
     setDailyTransferAmount(0);
     setIsAppendMode(false);
     setReceiptRange(`DS-${saleDate}`);
@@ -1371,82 +1353,24 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
             </div>
           )}
 
-          {/* Amount Inputs with Real-Time Two-Way Synchronization */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Cash Sales Input */}
-              <div className="p-3 rounded-xl bg-emerald-50/50 border border-emerald-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
-                    <Coins className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Cash Sales (Cash Drawer)</span>
-                  </span>
-                  <span className="text-[10px] font-medium text-emerald-700">{settings.currency}</span>
-                </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={dailyCashAmount || ''}
-                  onChange={(e) => handleCashChange(parseFloat(e.target.value || '0'))}
-                  className="mt-1.5 w-full px-3 py-2 rounded-lg bg-white border border-emerald-300 text-sm font-bold text-stone-900 font-tabular focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-                <span className="text-[10px] text-stone-500 mt-1 block">
-                  Physical currency collected in shop cash box
-                </span>
-              </div>
-
-              {/* Bank Transfer Sales Input */}
-              <div className="p-3 rounded-xl bg-purple-50/50 border border-purple-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
-                    <CreditCard className="w-3.5 h-3.5 text-purple-700" />
-                    <span>Bank Transfer Sales</span>
-                  </span>
-                  <span className="text-[10px] font-medium text-purple-700">{settings.currency}</span>
-                </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={dailyTransferAmount || ''}
-                  onChange={(e) => handleTransferChange(parseFloat(e.target.value || '0'))}
-                  className="mt-1.5 w-full px-3 py-2 rounded-lg bg-white border border-purple-300 text-sm font-bold text-stone-900 font-tabular focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-                <span className="text-[10px] text-stone-500 mt-1 block">
-                  Direct transfer via CBE Birr, Telebirr, or card
-                </span>
-              </div>
-            </div>
-
-            {/* Total Daily Sales Input (Stays naturally in sync with Cash + Transfer) */}
-            <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-300">
+          {/* Sales Amount Entry: User enters Total Daily Sales and Bank Transfer Sales -> Cash is automatically calculated */}
+          <div className="space-y-3.5">
+            {/* Input 1: Total Daily Sales */}
+            <div className="p-4 rounded-2xl bg-white border-2 border-stone-300 focus-within:border-orange-700 transition space-y-1.5 shadow-xs">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-stone-900">
-                  Total Daily Sales Amount ({settings.currencySymbol.trim()}) *
+                <label
+                  htmlFor="total-daily-sales-input"
+                  className="text-xs font-bold text-stone-900 flex items-center gap-1.5"
+                >
+                  <TrendingUp className="w-4 h-4 text-orange-700" />
+                  <span>1. Enter Total Daily Sales ({settings.currencySymbol.trim()}) *</span>
+                </label>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-orange-800 bg-orange-100 px-2 py-0.5 rounded-full">
+                  Primary Entry
                 </span>
-                <div className="flex items-center gap-1.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={handleQuickSetAllCash}
-                    className="px-2 py-0.5 rounded bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 font-medium cursor-pointer"
-                  >
-                    100% Cash
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleQuickSetAllTransfer}
-                    className="px-2 py-0.5 rounded bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 font-medium cursor-pointer"
-                  >
-                    100% Transfer
-                  </button>
-                </div>
               </div>
               <input
+                id="total-daily-sales-input"
                 type="number"
                 step="0.01"
                 min="0.01"
@@ -1455,11 +1379,105 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
                 placeholder="e.g. 85000.00"
                 value={totalDailyAmount || ''}
                 onChange={(e) => handleTotalChange(parseFloat(e.target.value || '0'))}
-                className="mt-1.5 w-full px-3.5 py-2.5 rounded-xl bg-white border border-stone-300 text-base font-bold text-stone-900 font-tabular focus:outline-none focus:border-orange-700 focus:ring-2 focus:ring-orange-200"
+                className="w-full text-xl sm:text-2xl font-bold text-stone-900 font-tabular placeholder-stone-300 focus:outline-none"
               />
-              <span className="text-[11px] text-stone-500 mt-1 block">
-                Total = Cash ({formatCurrency(resolvedCashAmount, settings.currencySymbol)}) + Transfer ({formatCurrency(resolvedTransferAmount, settings.currencySymbol)})
-              </span>
+              <p className="text-[11px] text-stone-500">
+                Combined daily gross sales (from your register summary or cash register Z-report).
+              </p>
+            </div>
+
+            {/* Input 2: Bank Transfer Sales */}
+            <div className="p-4 rounded-2xl bg-purple-50/40 border border-purple-200 focus-within:border-purple-600 transition space-y-1.5 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <label
+                  htmlFor="bank-transfer-sales-input"
+                  className="text-xs font-bold text-purple-950 flex items-center gap-1.5"
+                >
+                  <CreditCard className="w-4 h-4 text-purple-700" />
+                  <span>2. Enter Bank Transfer Sales ({settings.currencySymbol.trim()})</span>
+                </label>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={handleQuickSetAllCash}
+                    className="px-2 py-0.5 rounded-md bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 font-semibold transition cursor-pointer"
+                    title="Set bank transfer to 0 (all sales received as cash)"
+                  >
+                    All Cash (0 Transfer)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleQuickSetAllTransfer}
+                    className="px-2 py-0.5 rounded-md bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 font-semibold transition cursor-pointer"
+                    title="Set bank transfer to full sales amount"
+                  >
+                    100% Transfer
+                  </button>
+                </div>
+              </div>
+              <input
+                id="bank-transfer-sales-input"
+                type="number"
+                step="0.01"
+                min="0"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={dailyTransferAmount || ''}
+                onChange={(e) => handleTransferChange(parseFloat(e.target.value || '0'))}
+                className="w-full text-lg sm:text-xl font-bold text-stone-900 font-tabular placeholder-stone-300 focus:outline-none"
+              />
+              <p className="text-[11px] text-stone-600">
+                Amount received via CBE Birr, Telebirr, Awash, or Card POS. (Leave 0 if all sales were in cash).
+              </p>
+            </div>
+
+            {/* Automatically Calculated Daily Cash Sales Display Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 via-teal-50/50 to-white border-2 border-emerald-300 shadow-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                    <Coins className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-emerald-950 uppercase tracking-wide">
+                    Daily Cash Sales (In Cash Drawer)
+                  </span>
+                </div>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-emerald-600 text-white px-2.5 py-0.5 rounded-full shadow-xs">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>Automatically Calculated</span>
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between pt-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-emerald-950 font-tabular">
+                    {formatCurrency(resolvedCashAmount, settings.currencySymbol)}
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-800">
+                    physical cash
+                  </span>
+                </div>
+                <span className="text-xs font-semibold text-stone-600 font-tabular bg-white px-2 py-0.5 rounded-md border border-emerald-200">
+                  {calculatedTotal > 0
+                    ? `${Math.round((resolvedCashAmount / calculatedTotal) * 100)}% of sales`
+                    : '100% of sales'}
+                </span>
+              </div>
+
+              <div className="text-[11px] text-stone-600 pt-2 border-t border-emerald-200/80 flex flex-wrap items-center justify-between gap-1">
+                <span>
+                  Calculation formula: Total ({formatCurrency(calculatedTotal, settings.currencySymbol)}) − Transfer ({formatCurrency(resolvedTransferAmount, settings.currencySymbol)})
+                </span>
+                <span className="font-bold text-emerald-900">
+                  = {formatCurrency(resolvedCashAmount, settings.currencySymbol)} Cash
+                </span>
+              </div>
+
+              {dailyTransferAmount > calculatedTotal && calculatedTotal > 0 && (
+                <p className="text-[11px] font-semibold text-amber-800 bg-amber-100 p-2 rounded-lg border border-amber-300">
+                  Notice: Bank transfer amount exceeds total daily sales. Cash cannot be negative.
+                </p>
+              )}
             </div>
           </div>
 
