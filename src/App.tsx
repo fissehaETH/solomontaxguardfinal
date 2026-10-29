@@ -482,10 +482,11 @@ export default function App() {
     const saleId = sanitizeId(newSale.id);
     const existingForDate = sales.find((s) => s.date === newSale.date && s.id !== saleId);
     if (existingForDate) {
-      showToast(
-        `Daily sales for ${newSale.date} is already recorded. Please edit or delete it first.`
-      );
-      return;
+      // Seamlessly update the existing daily sales entry for this date
+      return handleUpdateSale({
+        ...newSale,
+        id: existingForDate.id,
+      });
     }
     const totalAmount = Number(newSale.totalAmount) || 0;
     const transferAmount =

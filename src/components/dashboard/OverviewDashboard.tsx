@@ -14,6 +14,7 @@ import {
   getSaleCashAmount,
   getSaleBankTransferAmount,
 } from '../../utils/formatters';
+import { getTodayLocalDateString } from '../../utils/dateUtils';
 import {
   Plus,
   ArrowUpRight,
@@ -69,7 +70,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   autoSyncStatus = 'idle',
   lastAutoSyncTime,
 }) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayLocalDateString();
 
   // Daily Sales calculations
   const todaySales = sales.filter((s) => s.date === today);
@@ -113,7 +114,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             TIN: <strong className="font-mono text-stone-800">{settings.taxIdNumber}</strong> <span aria-hidden="true">·</span> Currency: {settings.currency} <span aria-hidden="true">·</span> 15% VAT
           </p>
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-stone-900 tracking-tight mt-1">
-            Shop Sales, Purchases & Tax Summary
+            Shop Sales, Purchases &amp; Tax Summary
           </h1>
         </div>
 
@@ -163,18 +164,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
       </div>
 
-
-
       {/* 3 Core Financial Pillars Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Pillar 1: Total Daily Sales */}
         <div
           onClick={() => setActiveTab('sales')}
-          className="cursor-pointer rounded-2xl bg-white border border-stone-200 p-5 hover:border-stone-400 transition flex flex-col justify-between"
+          className="cursor-pointer rounded-2xl bg-white border border-stone-200 p-5 hover:border-stone-400 transition flex flex-col justify-between shadow-xs"
         >
           <div>
             <div className="flex items-center justify-between text-xs text-stone-500">
-              <span>01. Today&apos;s Sales</span>
+              <span className="font-semibold text-stone-700">01. Today&apos;s Daily Sales</span>
               <ArrowUpRight className="w-4 h-4 text-stone-400" />
             </div>
 
@@ -182,10 +181,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               {formatCurrency(todaySalesTotal, settings.currencySymbol)}
             </p>
             <p className="text-xs text-stone-500 mt-1">
-              {todaySales.length} entry today <span aria-hidden="true">·</span> 15% VAT on Sales:{' '}
-              <span className="font-semibold text-emerald-700 font-tabular">
-                {formatCurrency(todayTaxCollected, settings.currencySymbol)}
-              </span>
+              {todaySales.length > 0 ? (
+                <>
+                  <span className="text-emerald-700 font-semibold">● Recorded</span> · 15% VAT on Sales:{' '}
+                  <span className="font-semibold text-emerald-700 font-tabular">
+                    {formatCurrency(todayTaxCollected, settings.currencySymbol)}
+                  </span>
+                </>
+              ) : (
+                <span className="text-amber-700 font-medium">● Not recorded yet today</span>
+              )}
             </p>
           </div>
 
@@ -194,7 +199,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               Cash: <strong className="font-tabular text-stone-900">{formatCurrency(todayCashSales, settings.currencySymbol)}</strong>
             </span>
             <span>
-              Bank Transfer: <strong className="font-tabular text-stone-900">{formatCurrency(todayCardBankSales, settings.currencySymbol)}</strong>
+              Transfer: <strong className="font-tabular text-stone-900">{formatCurrency(todayCardBankSales, settings.currencySymbol)}</strong>
             </span>
           </div>
         </div>

@@ -15,6 +15,18 @@ export function getTodayLocalDateString(): string {
 }
 
 /**
+ * Returns yesterday's date in strict local YYYY-MM-DD format.
+ */
+export function getYesterdayLocalDateString(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Parses a date input or string and normalizes to a strict YYYY-MM-DD format.
  * Prevents timezone offset bugs (e.g. 2026-10-29 shifting to 2026-10-28 in UTC-5).
  */
