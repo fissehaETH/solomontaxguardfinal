@@ -11,7 +11,8 @@ dotenv.config();
 process.env.DISABLE_HMR = 'true';
 
 const isProduction = process.env.NODE_ENV === 'production';
-const PORT = Number(process.env.PORT) || 3000;
+// Dev server and reverse proxy target must strictly run on port 3000
+const PORT = 3000;
 
 // Initialize Google GenAI with required User-Agent
 const ai = new GoogleGenAI({
