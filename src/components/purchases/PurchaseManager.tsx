@@ -1284,7 +1284,11 @@ const generateUniqueInvoiceNumber = (
                 <div className="inline-flex rounded-lg bg-stone-100 p-0.5 border border-stone-200 text-[11px] self-start sm:self-auto">
                   <button
                     type="button"
-                    onClick={() => handleToggleInvoiceType('manual')}
+                    onClick={() => {
+                      handleToggleInvoiceType('manual');
+                      setInvoiceNumber('');
+                        setInvoiceError(null);
+                      }}
                     className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
                       invoiceType === 'manual'
                         ? 'bg-white text-orange-900 shadow-xs'
@@ -1295,7 +1299,11 @@ const generateUniqueInvoiceNumber = (
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleToggleInvoiceType('fiscal')}
+                    onClick={() => {
+                      handleToggleInvoiceType('fiscal');
+                      setInvoiceNumber('');
+                      setInvoiceError(null);
+                        }}
                     className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
                       invoiceType === 'fiscal'
                         ? 'bg-white text-purple-900 shadow-xs'
