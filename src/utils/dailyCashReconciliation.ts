@@ -4,7 +4,12 @@ import {
   BankTransaction,
   DailyRegisterClose,
 } from '../types';
-import { getSaleCashAmount, getSaleBankTransferAmount } from './formatters';
+import {
+  getSaleCashAmount,
+  getSaleBankTransferAmount,
+  getPurchaseCashAmount,
+  getPurchaseBankAmount,
+} from './formatters';
 
 export interface DailyCashAuditRecord {
   date: string; // ISO format: YYYY-MM-DD
@@ -218,17 +223,22 @@ export function calculateDailyCashExamination(
 
     dayPurchases.forEach((p) => {
       const total = Number(p.totalAmount) || 0;
-      const isCash = p.paymentMethod === 'cash';
+      const cAmt = getPurchaseCashAmount(p);
+      const bAmt = getPurchaseBankAmount(p);
 
-      if (isCash) {
-        cashPurchases += total;
+      if (cAmt > 0) {
+        cashPurchases += cAmt;
         cashPurchasesCount += 1;
-        inputVatPaidOnCashPurchases += Number(p.taxAmount) || 0;
-        if (total > ETHIOPIAN_CASH_PURCHASE_LIMIT) {
+        // Allocate input VAT proportionally to cash portion
+        const cashRatio = total > 0 ? cAmt / total : 1;
+        inputVatPaidOnCashPurchases += (Number(p.taxAmount) || 0) * cashRatio;
+        if (cAmt > ETHIOPIAN_CASH_PURCHASE_LIMIT) {
           largeCashPurchasesCount += 1;
         }
-      } else {
-        bankTransferPurchases += total;
+      }
+
+      if (bAmt > 0) {
+        bankTransferPurchases += bAmt;
         bankTransferPurchasesCount += 1;
       }
     });

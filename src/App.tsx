@@ -24,6 +24,7 @@ import {
   BankReconciliationStatement,
   BankTransaction,
   DailyRegisterClose,
+  PaymentMethod,
   PurchaseItem,
   ReconcilingItem,
   SaleTransaction,
@@ -34,6 +35,9 @@ import {
   calculateAuditReadiness,
   getSaleCashAmount,
   getSaleBankTransferAmount,
+  getPurchaseCashAmount,
+  getPurchaseBankAmount,
+  formatCurrency,
 } from './utils/formatters';
 import { calculateDailyCashExamination } from './utils/dailyCashReconciliation';
 import {
@@ -954,11 +958,21 @@ export default function App() {
   };
   const handleAddPurchase = async (newPurchase: PurchaseItem) => {
     const purchaseId = sanitizeId(newPurchase.id);
-    const paymentMethod = newPurchase.paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'cash';
+    const totalAmount = Number(newPurchase.totalAmount) || 0;
+    const bankAmount = getPurchaseBankAmount(newPurchase);
+    const cashAmount = getPurchaseCashAmount(newPurchase);
+    let targetBankAccountId = bankAmount > 0 ? (newPurchase.bankAccountId || bankAccounts[0]?.id) : undefined;
+    const paymentMethod: PaymentMethod =
+      bankAmount > 0 && cashAmount === 0 ? 'bank_transfer' : 'cash';
 
     const localItem: PurchaseItem = {
       ...newPurchase,
       id: purchaseId,
+      totalAmount,
+      cashAmount,
+      bankAmount,
+      paymentMethod,
+      bankAccountId: targetBankAccountId,
       createdAt: newPurchase.createdAt || Date.now(),
     };
 
@@ -984,7 +998,9 @@ export default function App() {
       subtotal: Number(newPurchase.subtotal) || 0,
       taxRate: Number(newPurchase.taxRate) || 0,
       taxAmount: Number(newPurchase.taxAmount) || 0,
-      totalAmount: Number(newPurchase.totalAmount) || 0,
+      totalAmount,
+      cashAmount,
+      bankAmount,
       deductibility: newPurchase.deductibility,
       deductiblePercentage: Number(newPurchase.deductiblePercentage) || 0,
       paymentMethod,
@@ -997,8 +1013,8 @@ export default function App() {
     if (newPurchase.vendorTin && newPurchase.vendorTin.trim()) {
       purchasePayload.vendorTin = newPurchase.vendorTin.trim().slice(0, 100);
     }
-    if (paymentMethod !== 'cash' && newPurchase.bankAccountId) {
-      purchasePayload.bankAccountId = sanitizeId(newPurchase.bankAccountId);
+    if (bankAmount > 0 && targetBankAccountId) {
+      purchasePayload.bankAccountId = sanitizeId(targetBankAccountId);
     }
     if (newPurchase.receiptImage) {
       purchasePayload.receiptImage = newPurchase.receiptImage.slice(0, 750000);
@@ -1015,25 +1031,80 @@ export default function App() {
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
-    if (paymentMethod !== 'cash' && newPurchase.bankAccountId) {
-      const nextAccounts = bankAccounts.map((a) =>
-        a.id === newPurchase.bankAccountId
-          ? { ...a, currentBalance: a.currentBalance - newPurchase.totalAmount }
+    // Auto-create default CBE account if user has bank outflow but no accounts exist
+    let currentBankAccounts = bankAccounts;
+    if (bankAmount > 0 && !targetBankAccountId && currentBankAccounts.length === 0) {
+      const defaultAcc: BankAccount = {
+        id: 'acc-cbe-main',
+        name: 'Main Business Account',
+        bankName: 'Commercial Bank of Ethiopia (CBE)',
+        accountNumberMasked: '•••• 4821',
+        type: 'checking',
+        currentBalance: 0,
+        currency: settings.currency,
+        color: 'from-orange-700 to-amber-900',
+      };
+      currentBankAccounts = [defaultAcc];
+      setBankAccounts(currentBankAccounts);
+      saveUserLocalCollection('bankAccounts', currentBankAccounts, user?.uid);
+      targetBankAccountId = defaultAcc.id;
+    }
+
+    if (bankAmount > 0 && targetBankAccountId) {
+      const nextAccounts = currentBankAccounts.map((a) =>
+        a.id === targetBankAccountId
+          ? { ...a, currentBalance: a.currentBalance - bankAmount }
           : a
       );
       setBankAccounts(nextAccounts);
       saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+
+      const txId = sanitizeId(`btx-pur-${purchaseId}`);
+      const purBankTx: BankTransaction = {
+        id: txId,
+        bankAccountId: targetBankAccountId,
+        date: newPurchase.date,
+        description: `Supplier Invoice ${newPurchase.invoiceNumber}: ${newPurchase.vendorName}${cashAmount > 0 ? ' (Bank Portion)' : ''}`,
+        type: 'debit',
+        amount: bankAmount,
+        category: 'vendor_payout',
+        referenceId: purchaseId,
+        isReconciled: true,
+        notes: `Tied to verified invoice ${newPurchase.invoiceNumber}. Paid: Bank ${formatCurrency(bankAmount, settings.currencySymbol)}${cashAmount > 0 ? `, Cash ${formatCurrency(cashAmount, settings.currencySymbol)}` : ''}`.slice(0, 1000),
+      };
+
+      const nextTxs = [
+        purBankTx,
+        ...bankTransactions.filter((t) => t.id !== txId && t.referenceId !== purchaseId),
+      ];
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+
+      enqueueSyncMutation({
+        id: `sync-btx-${txId}`,
+        uid: user?.uid || 'guest',
+        collection: 'bankTransactions',
+        operation: 'set',
+        docId: txId,
+        data: {
+          ...purBankTx,
+          ownerId: user?.uid || 'guest',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        timestamp: Date.now(),
+      });
     }
 
     // 4. Online Firestore write if user logged in
     await safeWrite(
       async () => {
         await setDoc(doc(db, 'purchases', purchaseId), purchasePayload);
-        if (paymentMethod !== 'cash' && newPurchase.bankAccountId) {
-          const targetAcc = bankAccounts.find((a) => a.id === newPurchase.bankAccountId);
+        if (bankAmount > 0 && targetBankAccountId) {
+          const targetAcc = bankAccounts.find((a) => a.id === targetBankAccountId);
           if (targetAcc) {
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-              currentBalance: targetAcc.currentBalance - newPurchase.totalAmount,
+              currentBalance: targetAcc.currentBalance - bankAmount,
               updatedAt: serverTimestamp(),
             });
             const txId = sanitizeId(`btx-pur-${purchaseId}`);
@@ -1042,9 +1113,9 @@ export default function App() {
               ownerId: user!.uid,
               bankAccountId: targetAcc.id,
               date: newPurchase.date.slice(0, 30),
-              description: `Vendor Invoice ${newPurchase.invoiceNumber}: ${newPurchase.vendorName}`.slice(0, 500),
+              description: `Supplier Invoice ${newPurchase.invoiceNumber}: ${newPurchase.vendorName}${cashAmount > 0 ? ' (Bank Portion)' : ''}`.slice(0, 500),
               type: 'debit',
-              amount: Number(newPurchase.totalAmount) || 0,
+              amount: bankAmount,
               category: 'vendor_payout',
               referenceId: purchaseId,
               isReconciled: true,
@@ -1071,12 +1142,21 @@ export default function App() {
   const handleUpdatePurchase = async (updatedPurchase: PurchaseItem) => {
     const purchaseId = sanitizeId(updatedPurchase.id);
     const oldPurchase = purchases.find((p) => p.id === purchaseId);
-    const paymentMethod =
-      updatedPurchase.paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'cash';
+    const totalAmount = Number(updatedPurchase.totalAmount) || 0;
+    const newBankAmount = getPurchaseBankAmount(updatedPurchase);
+    const newCashAmount = getPurchaseCashAmount(updatedPurchase);
+    const newBankId = newBankAmount > 0 ? (updatedPurchase.bankAccountId || bankAccounts[0]?.id) : '';
+    const paymentMethod: PaymentMethod =
+      newBankAmount > 0 && newCashAmount === 0 ? 'bank_transfer' : 'cash';
 
     const localItem: PurchaseItem = {
       ...updatedPurchase,
       id: purchaseId,
+      totalAmount,
+      cashAmount: newCashAmount,
+      bankAmount: newBankAmount,
+      paymentMethod,
+      bankAccountId: newBankId || undefined,
     };
 
     // 1. Optimistic React state update
@@ -1100,14 +1180,13 @@ export default function App() {
       subtotal: Number(updatedPurchase.subtotal) || 0,
       taxRate: Number(updatedPurchase.taxRate) || 0,
       taxAmount: Number(updatedPurchase.taxAmount) || 0,
-      totalAmount: Number(updatedPurchase.totalAmount) || 0,
+      totalAmount,
+      cashAmount: newCashAmount,
+      bankAmount: newBankAmount,
       deductibility: updatedPurchase.deductibility,
       deductiblePercentage: Number(updatedPurchase.deductiblePercentage) || 0,
       paymentMethod,
-      bankAccountId:
-        paymentMethod !== 'cash' && updatedPurchase.bankAccountId
-          ? sanitizeId(updatedPurchase.bankAccountId)
-          : '',
+      bankAccountId: newBankId ? sanitizeId(newBankId) : '',
       isReconciledWithBank: Boolean(updatedPurchase.isReconciledWithBank),
       receiptImage: (updatedPurchase.receiptImage || '').slice(0, 750000),
       notes: (updatedPurchase.notes || '').slice(0, 1000),
@@ -1126,26 +1205,46 @@ export default function App() {
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
     // Adjust bank balances locally
-    const oldBankId =
-      oldPurchase && oldPurchase.paymentMethod === 'bank_transfer' && oldPurchase.bankAccountId
-        ? oldPurchase.bankAccountId
-        : '';
-    const oldAmount = oldPurchase && oldBankId ? oldPurchase.totalAmount : 0;
-    const newBankId =
-      paymentMethod === 'bank_transfer' && updatedPurchase.bankAccountId
-        ? sanitizeId(updatedPurchase.bankAccountId)
-        : '';
-    const newAmount = newBankId ? Number(updatedPurchase.totalAmount) || 0 : 0;
+    const oldBankId = oldPurchase ? (oldPurchase.bankAccountId || '') : '';
+    const oldBankAmount = oldPurchase ? getPurchaseBankAmount(oldPurchase) : 0;
 
     if (oldBankId || newBankId) {
       const nextAccounts = bankAccounts.map((a) => {
         let bal = a.currentBalance;
-        if (a.id === oldBankId) bal += oldAmount;
-        if (a.id === newBankId) bal -= newAmount;
+        if (a.id === oldBankId) bal += oldBankAmount;
+        if (a.id === newBankId) bal -= newBankAmount;
         return { ...a, currentBalance: bal };
       });
       setBankAccounts(nextAccounts);
       saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+    }
+
+    const txId = sanitizeId(`btx-pur-${purchaseId}`);
+    if (newBankId && newBankAmount > 0) {
+      const purBankTx: BankTransaction = {
+        id: txId,
+        bankAccountId: newBankId,
+        date: updatedPurchase.date,
+        description: `Supplier Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}${newCashAmount > 0 ? ' (Bank Portion)' : ''}`,
+        type: 'debit',
+        amount: newBankAmount,
+        category: 'vendor_payout',
+        referenceId: purchaseId,
+        isReconciled: true,
+        notes: `Tied to verified invoice ${updatedPurchase.invoiceNumber}. Paid: Bank ${formatCurrency(newBankAmount, settings.currencySymbol)}${newCashAmount > 0 ? `, Cash ${formatCurrency(newCashAmount, settings.currencySymbol)}` : ''}`.slice(0, 1000),
+      };
+      const nextTxs = [
+        purBankTx,
+        ...bankTransactions.filter((t) => t.id !== txId && t.referenceId !== purchaseId),
+      ];
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+    } else {
+      const nextTxs = bankTransactions.filter((t) => t.id !== txId && t.referenceId !== purchaseId);
+      if (nextTxs.length !== bankTransactions.length) {
+        setBankTransactions(nextTxs);
+        saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
+      }
     }
 
     // 4. Online Firestore write
@@ -1156,7 +1255,7 @@ export default function App() {
           const oldAcc = bankAccounts.find((a) => a.id === oldBankId);
           if (oldAcc) {
             await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
-              currentBalance: oldAcc.currentBalance + oldAmount,
+              currentBalance: oldAcc.currentBalance + oldBankAmount,
               updatedAt: serverTimestamp(),
             });
           }
@@ -1164,7 +1263,7 @@ export default function App() {
         if (newBankId) {
           const targetAcc = bankAccounts.find((a) => a.id === newBankId);
           if (targetAcc) {
-            const delta = oldBankId === newBankId ? newAmount - oldAmount : newAmount;
+            const delta = oldBankId === newBankId ? newBankAmount - oldBankAmount : newBankAmount;
             if (delta !== 0) {
               await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
                 currentBalance: targetAcc.currentBalance - delta,
@@ -1174,15 +1273,14 @@ export default function App() {
           }
         }
 
-        const txId = sanitizeId(`btx-pur-${purchaseId}`);
         const existingAutoTx = bankTransactions.find((t) => t.id === txId);
-        if (newBankId && newAmount > 0) {
+        if (newBankId && newBankAmount > 0) {
           if (existingAutoTx) {
             await updateDoc(doc(db, 'bankTransactions', txId), {
               bankAccountId: newBankId,
               date: updatedPurchase.date.slice(0, 30),
-              description: `Vendor Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}`.slice(0, 500),
-              amount: newAmount,
+              description: `Supplier Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}${newCashAmount > 0 ? ' (Bank Portion)' : ''}`.slice(0, 500),
+              amount: newBankAmount,
               notes: `Tied to verified invoice ${updatedPurchase.invoiceNumber}`.slice(0, 1000),
               updatedAt: serverTimestamp(),
             });
@@ -1192,9 +1290,9 @@ export default function App() {
               ownerId: user!.uid,
               bankAccountId: newBankId,
               date: updatedPurchase.date.slice(0, 30),
-              description: `Vendor Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}`.slice(0, 500),
+              description: `Supplier Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}${newCashAmount > 0 ? ' (Bank Portion)' : ''}`.slice(0, 500),
               type: 'debit',
-              amount: newAmount,
+              amount: newBankAmount,
               category: 'vendor_payout',
               referenceId: purchaseId,
               isReconciled: true,
@@ -1233,29 +1331,44 @@ export default function App() {
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
-    if (oldPurchase && oldPurchase.paymentMethod === 'bank_transfer' && oldPurchase.bankAccountId) {
-      const nextAccounts = bankAccounts.map((a) =>
-        a.id === oldPurchase.bankAccountId
-          ? { ...a, currentBalance: a.currentBalance + oldPurchase.totalAmount }
-          : a
-      );
-      setBankAccounts(nextAccounts);
-      saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+    if (oldPurchase) {
+      const oldBankAmount = getPurchaseBankAmount(oldPurchase);
+      const oldBankId = oldPurchase.bankAccountId || '';
+      if (oldBankAmount > 0 && oldBankId) {
+        const nextAccounts = bankAccounts.map((a) =>
+          a.id === oldBankId
+            ? { ...a, currentBalance: a.currentBalance + oldBankAmount }
+            : a
+        );
+        setBankAccounts(nextAccounts);
+        saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
+      }
+    }
+
+    const txId = sanitizeId(`btx-pur-${id}`);
+    const nextTxs = bankTransactions.filter((t) => t.id !== txId && t.referenceId !== id);
+    if (nextTxs.length !== bankTransactions.length) {
+      setBankTransactions(nextTxs);
+      saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
     }
 
     await safeWrite(
       async () => {
         await deleteDoc(doc(db, 'purchases', id));
-        if (oldPurchase && oldPurchase.paymentMethod === 'bank_transfer' && oldPurchase.bankAccountId) {
-          const acc = bankAccounts.find((a) => a.id === oldPurchase.bankAccountId);
-          if (acc) {
-            await updateDoc(doc(db, 'bankAccounts', acc.id), {
-              currentBalance: acc.currentBalance + oldPurchase.totalAmount,
-              updatedAt: serverTimestamp(),
-            });
+        if (oldPurchase) {
+          const oldBankAmount = getPurchaseBankAmount(oldPurchase);
+          const oldBankId = oldPurchase.bankAccountId || '';
+          if (oldBankAmount > 0 && oldBankId) {
+            const acc = bankAccounts.find((a) => a.id === oldBankId);
+            if (acc) {
+              await updateDoc(doc(db, 'bankAccounts', acc.id), {
+                currentBalance: acc.currentBalance + oldBankAmount,
+                updatedAt: serverTimestamp(),
+              });
+            }
+            const txId = sanitizeId(`btx-pur-${oldPurchase.id}`);
+            await deleteDoc(doc(db, 'bankTransactions', txId));
           }
-          const txId = sanitizeId(`btx-pur-${oldPurchase.id}`);
-          await deleteDoc(doc(db, 'bankTransactions', txId));
         }
       },
       OperationType.DELETE,
@@ -3168,6 +3281,7 @@ export default function App() {
       {activeTab === 'sales' && (
         <SalesManager
           sales={sales}
+          purchases={purchases}
           bankAccounts={bankAccounts}
           dailyCloses={dailyCloses}
           settings={settings}

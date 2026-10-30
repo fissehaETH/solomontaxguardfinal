@@ -13,6 +13,9 @@ import {
   formatRelativeDate,
   getSaleCashAmount,
   getSaleBankTransferAmount,
+  getPurchaseCashAmount,
+  getPurchaseBankAmount,
+  getPurchasePaymentType,
 } from '../../utils/formatters';
 import { getTodayLocalDateString } from '../../utils/dateUtils';
 import {
@@ -92,6 +95,8 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
     0
   );
   const allInputTaxCredits = purchases.reduce((acc, p) => acc + p.taxAmount, 0);
+  const allCashPurchases = purchases.reduce((acc, p) => acc + getPurchaseCashAmount(p), 0);
+  const allBankPurchases = purchases.reduce((acc, p) => acc + getPurchaseBankAmount(p), 0);
 
   // Bank Balances
   const totalBankBalance = bankAccounts.reduce((acc, b) => acc + b.currentBalance, 0);
@@ -226,11 +231,13 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </p>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-xs text-stone-600">
-            <span>
-              Reduces Tax: <strong className="font-tabular text-emerald-700">{formatCurrency(allDeductiblePurchases, settings.currencySymbol)}</strong>
+          <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-xs text-stone-600 flex-wrap gap-1">
+            <span className="flex items-center gap-1.5 flex-wrap">
+              <span>Cash: <strong className="font-tabular text-stone-900">{formatCurrency(allCashPurchases, settings.currencySymbol)}</strong></span>
+              <span aria-hidden="true">·</span>
+              <span>Bank: <strong className="font-tabular text-stone-900">{formatCurrency(allBankPurchases, settings.currencySymbol)}</strong></span>
             </span>
-            <span className="text-orange-700 font-semibold">Open →</span>
+            <span className="text-orange-700 font-semibold shrink-0">Open →</span>
           </div>
         </div>
 
@@ -445,6 +452,37 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                             )}
                             <span aria-hidden="true">·</span>
                             <span className="font-medium text-stone-700">{formatRelativeDate(pur.date)}</span>
+                            {(() => {
+                              const tender = getPurchasePaymentType(pur);
+                              if (tender === 'split') {
+                                return (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                      Split: Cash + Bank
+                                    </span>
+                                  </>
+                                );
+                              } else if (tender === 'bank') {
+                                return (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
+                                      Bank
+                                    </span>
+                                  </>
+                                );
+                              } else {
+                                return (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                                      Cash
+                                    </span>
+                                  </>
+                                );
+                              }
+                            })()}
                             <span aria-hidden="true">·</span>
                             <span>{pur.deductiblePercentage}% Allowed Expense</span>
                             {pur.receiptImage && (

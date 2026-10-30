@@ -55,6 +55,8 @@ export interface PurchaseItem {
   taxRate: number;
   taxAmount: number; // Input VAT/Tax
   totalAmount: number;
+  cashAmount?: number; // Cash portion paid from cash drawer/petty cash
+  bankAmount?: number; // Bank transfer/cheque portion paid from bank account
   deductibility: TaxDeductibility;
   deductiblePercentage: number; // 100, 50, 0
   paymentMethod: PaymentMethod;

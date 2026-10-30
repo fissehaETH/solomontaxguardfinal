@@ -179,6 +179,46 @@ export function getSaleCashAmount(sale: SaleTransaction): number {
 }
 
 /**
+ * Returns the Bank Transfer / Cheque portion of a purchase / expense.
+ */
+export function getPurchaseBankAmount(purchase: PurchaseItem): number {
+  const total = Math.max(0, Number(purchase.totalAmount) || 0);
+  if (typeof purchase.bankAmount === 'number') {
+    return Math.min(Math.max(0, Number(purchase.bankAmount)), total);
+  }
+  if (purchase.paymentMethod === 'bank_transfer') {
+    return total;
+  }
+  return 0;
+}
+
+/**
+ * Returns the physical Cash portion of a purchase / expense.
+ * For purchases, any portion not paid via bank transfer is paid via cash drawer/petty cash.
+ */
+export function getPurchaseCashAmount(purchase: PurchaseItem): number {
+  const total = Math.max(0, Number(purchase.totalAmount) || 0);
+  if (typeof purchase.cashAmount === 'number') {
+    return Math.min(Math.max(0, Number(purchase.cashAmount)), total);
+  }
+  const bank = getPurchaseBankAmount(purchase);
+  return Math.max(0, total - bank);
+}
+
+export type PurchaseTenderType = 'cash' | 'bank' | 'split';
+
+/**
+ * Categorizes how the purchase was settled: strictly Cash, strictly Bank, or Split (Both).
+ */
+export function getPurchasePaymentType(purchase: PurchaseItem): PurchaseTenderType {
+  const bank = getPurchaseBankAmount(purchase);
+  const cash = getPurchaseCashAmount(purchase);
+  if (bank > 0 && cash > 0) return 'split';
+  if (bank > 0) return 'bank';
+  return 'cash';
+}
+
+/**
  * Audit Readiness Score & Diagnostic Calculator
  * Evaluates the 5 biggest triggers for tax audit fines & penalties:
  * 1. Unreconciled bank transactions (unexplained bank deposits look like unrecorded cash sales)

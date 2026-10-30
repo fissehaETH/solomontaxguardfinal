@@ -11,6 +11,10 @@ import {
   formatCurrency,
   formatDate,
   PAYMENT_METHOD_LABELS,
+  getPurchaseBankAmount,
+  getPurchaseCashAmount,
+  getPurchasePaymentType,
+  PurchaseTenderType,
 } from '../../utils/formatters';
 import { compressImage } from '../../utils/imageUtils';
 import { scanReceiptWithAI } from '../../utils/aiApi';
@@ -32,6 +36,12 @@ import {
   Calendar,
   Filter,
   AlertTriangle,
+  Landmark,
+  Coins,
+  Split,
+  ArrowRightLeft,
+  ShieldCheck,
+  Check,
 } from 'lucide-react';
 
 export const EXPENSE_CATEGORIES: { id: ExpenseCategory; label: string }[] = [
@@ -76,6 +86,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchField, setSearchField] = useState<'all' | 'vendor' | 'tin'>('all');
   const [deductibleFilter, setDeductibleFilter] = useState<string>('all');
+  const [tenderFilter, setTenderFilter] = useState<'all' | 'cash' | 'bank' | 'split'>('all');
   const [dateFilterMode, setDateFilterMode] = useState<
     'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'this_year' | 'range' | 'custom'
   >('all');
@@ -96,7 +107,11 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const [totalInputAmount, setTotalInputAmount] = useState<number>(0);
   const [taxRatePercent, setTaxRatePercent] = useState(Math.round(settings.defaultSalesTaxRate * 100));
   const [deductibility, setDeductibility] = useState<TaxDeductibility>('fully_deductible');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  
+  // Payment Tender & Bank / Cash Allocation State
+  const [paymentTender, setPaymentTender] = useState<PurchaseTenderType>('cash');
+  const [bankAmount, setBankAmount] = useState<number>(0);
+  const [cashAmount, setCashAmount] = useState<number>(0);
   const [selectedBankId, setSelectedBankId] = useState<string>(bankAccounts[0]?.id || '');
   const [receiptImage, setReceiptImage] = useState<string>('');
   const [notes, setNotes] = useState('');
@@ -116,6 +131,78 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const scanOnlyInputRef = useRef<HTMLInputElement>(null);
 
+  const handleTotalAmountChange = (newTotal: number) => {
+    setTotalInputAmount(newTotal);
+    if (paymentTender === 'cash') {
+      setCashAmount(newTotal);
+      setBankAmount(0);
+    } else if (paymentTender === 'bank') {
+      setBankAmount(newTotal);
+      setCashAmount(0);
+    } else {
+      // Split mode: clamp bank portion to new total, remainder to cash
+      const clampedBank = Math.min(Math.max(0, bankAmount), newTotal);
+      setBankAmount(clampedBank);
+      setCashAmount(Math.max(0, newTotal - clampedBank));
+    }
+  };
+
+  const handleSwitchTender = (newTender: PurchaseTenderType) => {
+    setPaymentTender(newTender);
+    if (newTender === 'cash') {
+      setCashAmount(totalInputAmount);
+      setBankAmount(0);
+    } else if (newTender === 'bank') {
+      setBankAmount(totalInputAmount);
+      setCashAmount(0);
+    } else {
+      // Split mode: intelligent initial distribution
+      if (totalInputAmount > 50000) {
+        // Under Ethiopian tax rules, single cash purchase > 50k is prohibited. Set Cash to 50k max and Bank to remainder!
+        setCashAmount(50000);
+        setBankAmount(Math.max(0, totalInputAmount - 50000));
+      } else {
+        const half = Math.round((totalInputAmount / 2) * 100) / 100;
+        setBankAmount(half);
+        setCashAmount(Math.max(0, totalInputAmount - half));
+      }
+    }
+  };
+
+  const handleBankAmountChange = (val: number) => {
+    const clampedBank = Math.min(Math.max(0, val), totalInputAmount);
+    setBankAmount(clampedBank);
+    setCashAmount(Math.max(0, totalInputAmount - clampedBank));
+  };
+
+  const handleCashAmountChange = (val: number) => {
+    const clampedCash = Math.min(Math.max(0, val), totalInputAmount);
+    setCashAmount(clampedCash);
+    setBankAmount(Math.max(0, totalInputAmount - clampedCash));
+  };
+
+  const handleQuick5050 = () => {
+    const half = Math.round((totalInputAmount / 2) * 100) / 100;
+    setBankAmount(half);
+    setCashAmount(Math.max(0, totalInputAmount - half));
+  };
+
+  const handleQuickMaxCash = () => {
+    const maxCash = Math.min(50000, totalInputAmount);
+    setCashAmount(maxCash);
+    setBankAmount(Math.max(0, totalInputAmount - maxCash));
+  };
+
+  const handleQuickAllBank = () => {
+    setBankAmount(totalInputAmount);
+    setCashAmount(0);
+  };
+
+  const handleQuickAllCash = () => {
+    setCashAmount(totalInputAmount);
+    setBankAmount(0);
+  };
+
   const openEditPurchaseModal = (pur: PurchaseItem) => {
     setEditingPurchase(pur);
     setInvoiceNumber(pur.invoiceNumber);
@@ -127,7 +214,14 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setTotalInputAmount(pur.totalAmount);
     setTaxRatePercent(Math.round((pur.taxRate ?? settings.defaultSalesTaxRate) * 100));
     setDeductibility(pur.deductibility);
-    setPaymentMethod(pur.paymentMethod);
+
+    const bAmt = getPurchaseBankAmount(pur);
+    const cAmt = getPurchaseCashAmount(pur);
+    const pType = getPurchasePaymentType(pur);
+    setPaymentTender(pType);
+    setBankAmount(bAmt);
+    setCashAmount(cAmt);
+
     setSelectedBankId(pur.bankAccountId || bankAccounts[0]?.id || '');
     setReceiptImage(pur.receiptImage || '');
     setNotes(pur.notes || '');
@@ -151,9 +245,11 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setItemName('Stock Materials & Inventory');
     setCategory('inventory_cogs');
     setTotalInputAmount(0);
+    setPaymentTender('cash');
+    setBankAmount(0);
+    setCashAmount(0);
     setTaxRatePercent(Math.round(settings.defaultSalesTaxRate * 100));
     setDeductibility('fully_deductible');
-    setPaymentMethod('cash');
     setSelectedBankId(bankAccounts[0]?.id || '');
     setReceiptImage('');
     setNotes('');
@@ -184,7 +280,12 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     // 1. Deductibility Filter
     if (deductibleFilter !== 'all' && item.deductibility !== deductibleFilter) return false;
 
-    // 2. Date Filter
+    // 2. Payment Tender Filter (Cash vs Bank vs Split)
+    if (tenderFilter === 'cash' && getPurchaseCashAmount(item) <= 0) return false;
+    if (tenderFilter === 'bank' && getPurchaseBankAmount(item) <= 0) return false;
+    if (tenderFilter === 'split' && getPurchasePaymentType(item) !== 'split') return false;
+
+    // 3. Date Filter
     if (dateFilterMode === 'today' && item.date !== today) return false;
     if (dateFilterMode === 'yesterday' && item.date !== yesterday) return false;
     if (dateFilterMode === 'this_week') {
@@ -202,7 +303,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     }
     if (filterDate && dateFilterMode === 'custom' && item.date !== filterDate) return false;
 
-    // 3. Search Query (Supplier Name, Supplier TIN, Invoice #, Item, or Date)
+    // 4. Search Query (Supplier Name, Supplier TIN, Invoice #, Item, or Date)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       const matchVendor = item.vendorName.toLowerCase().includes(q);
@@ -231,6 +332,8 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
   // KPI Calculations
   const totalPurchasedAmount = filteredPurchases.reduce((acc, p) => acc + p.totalAmount, 0);
+  const totalPurchasedCash = filteredPurchases.reduce((acc, p) => acc + getPurchaseCashAmount(p), 0);
+  const totalPurchasedBank = filteredPurchases.reduce((acc, p) => acc + getPurchaseBankAmount(p), 0);
   const totalDeductibleExpense = filteredPurchases.reduce(
     (acc, p) => acc + p.subtotal * (p.deductiblePercentage / 100),
     0
@@ -251,7 +354,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
       if (extracted.invoiceNumber) setInvoiceNumber(extracted.invoiceNumber);
       if (extracted.date) setPurchaseDate(extracted.date);
       if (typeof extracted.amount === 'number' && extracted.amount > 0) {
-        setTotalInputAmount(extracted.amount);
+        handleTotalAmountChange(extracted.amount);
       }
       if (extracted.itemName) setItemName(extracted.itemName);
       if (extracted.category) setCategory(extracted.category);
@@ -315,6 +418,24 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
     const deductiblePercentage = getDeductiblePercent(deductibility);
 
+    let resolvedBank = 0;
+    let resolvedCash = 0;
+    if (paymentTender === 'cash') {
+      resolvedCash = totalAmount;
+      resolvedBank = 0;
+    } else if (paymentTender === 'bank') {
+      resolvedBank = totalAmount;
+      resolvedCash = 0;
+    } else {
+      resolvedBank = Math.min(Math.max(0, Number(bankAmount) || 0), totalAmount);
+      resolvedCash = Math.max(0, totalAmount - resolvedBank);
+    }
+
+    const method: PaymentMethod =
+      resolvedBank > 0 && resolvedCash === 0 ? 'bank_transfer' : 'cash';
+
+    const chosenBankId = resolvedBank > 0 ? (selectedBankId || bankAccounts[0]?.id) : undefined;
+
     const purchaseRecord: PurchaseItem = {
       id: editingPurchase ? editingPurchase.id : `pur-${Date.now()}`,
       invoiceNumber: invoiceNumber.trim() || `FS-${Math.floor(10000 + Math.random() * 90000)}`,
@@ -329,11 +450,13 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
       taxRate: rateDecimal,
       taxAmount: Number(taxAmount.toFixed(2)),
       totalAmount: Number(totalAmount.toFixed(2)),
+      cashAmount: Number(resolvedCash.toFixed(2)),
+      bankAmount: Number(resolvedBank.toFixed(2)),
       deductibility,
       deductiblePercentage,
-      paymentMethod,
-      bankAccountId: paymentMethod !== 'cash' ? (selectedBankId || bankAccounts[0]?.id) : undefined,
-      isReconciledWithBank: paymentMethod !== 'cash' && !!(selectedBankId || bankAccounts[0]?.id),
+      paymentMethod: method,
+      bankAccountId: chosenBankId,
+      isReconciledWithBank: resolvedBank > 0 && !!chosenBankId,
       receiptImage: receiptImage || undefined,
       notes,
       createdAt: editingPurchase ? editingPurchase.createdAt : Date.now(),
@@ -354,6 +477,9 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setItemName('Stock Materials & Inventory');
     setCategory('inventory_cogs');
     setTotalInputAmount(0);
+    setPaymentTender('cash');
+    setBankAmount(0);
+    setCashAmount(0);
     setReceiptImage('');
     setNotes('');
     setAiNotice(null);
@@ -410,12 +536,24 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
       {/* KPI Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-4 rounded-2xl bg-white border border-stone-200">
-          <span className="text-xs text-stone-500">Total Purchased Outflow</span>
-          <p className="text-xl font-bold text-stone-900 font-tabular mt-1">
+        <div className="p-4 rounded-2xl bg-white border border-stone-200 space-y-1">
+          <div className="flex items-center justify-between text-xs text-stone-500">
+            <span>Total Purchased Outflow</span>
+            <span className="font-semibold text-stone-700">{filteredPurchases.length} invoices</span>
+          </div>
+          <p className="text-xl sm:text-2xl font-bold text-stone-900 font-tabular">
             {formatCurrency(totalPurchasedAmount, settings.currencySymbol)}
           </p>
-          <span className="text-xs text-stone-500">{filteredPurchases.length} verified supplier invoices</span>
+          <div className="pt-2 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-600 font-tabular">
+            <span className="inline-flex items-center gap-1 text-emerald-800 font-semibold">
+              <Coins className="w-3 h-3" />
+              <span>Cash: {formatCurrency(totalPurchasedCash, settings.currencySymbol)}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 text-purple-900 font-semibold">
+              <Landmark className="w-3 h-3" />
+              <span>Bank: {formatCurrency(totalPurchasedBank, settings.currencySymbol)}</span>
+            </span>
+          </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-stone-200">
@@ -423,7 +561,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
           <p className="text-xl font-bold text-emerald-700 font-tabular mt-1">
             {formatCurrency(totalDeductibleExpense, settings.currencySymbol)}
           </p>
-          <span className="text-xs text-stone-500">Reduces net taxable profit</span>
+          <span className="text-xs text-stone-500">Reduces net taxable business profit</span>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-stone-200">
@@ -431,7 +569,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
           <p className="text-xl font-bold text-stone-900 font-tabular mt-1">
             {formatCurrency(totalInputTaxClaimable, settings.currencySymbol)}
           </p>
-          <span className="text-xs text-stone-500">Offsets Output VAT owed</span>
+          <span className="text-xs text-stone-500">Offsets Output VAT on sales</span>
         </div>
       </div>
 
@@ -506,6 +644,19 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto">
+            {/* Tender Filter: All / Cash / Bank / Split */}
+            <select
+              value={tenderFilter}
+              onChange={(e) => setTenderFilter(e.target.value as any)}
+              className="bg-white border border-stone-300 text-stone-800 text-xs rounded-xl px-3 py-2.5 focus:outline-none shrink-0 font-medium"
+              title="Filter by payment source: Cash, Bank, or Split"
+            >
+              <option value="all">All Tenders (Cash &amp; Bank)</option>
+              <option value="cash">Cash Outflows (Drawer)</option>
+              <option value="bank">Bank Transfers / Cheques</option>
+              <option value="split">Split (Bank &amp; Cash)</option>
+            </select>
+
             <select
               value={deductibleFilter}
               onChange={(e) => setDeductibleFilter(e.target.value)}
@@ -678,6 +829,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             filterEndDate ||
             searchQuery ||
             searchField !== 'all' ||
+            tenderFilter !== 'all' ||
             deductibleFilter !== 'all') && (
             <button
               type="button"
@@ -688,6 +840,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                 setFilterEndDate('');
                 setSearchQuery('');
                 setSearchField('all');
+                setTenderFilter('all');
                 setDeductibleFilter('all');
               }}
               className="px-2.5 py-1 text-xs text-orange-800 hover:text-orange-950 bg-orange-50 hover:bg-orange-100 rounded-md border border-orange-200 transition cursor-pointer flex items-center gap-1 ml-auto"
@@ -699,7 +852,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
         </div>
 
         {/* Active Filter Indicators */}
-        {(searchQuery || dateFilterMode !== 'all' || filterDate || filterStartDate) && (
+        {(searchQuery || dateFilterMode !== 'all' || filterDate || filterStartDate || tenderFilter !== 'all') && (
           <div className="pt-2 border-t border-stone-100 flex flex-wrap items-center gap-2 text-[11px] text-stone-600">
             <span className="font-semibold text-stone-700">Active Criteria:</span>
             {searchQuery && (
@@ -716,6 +869,11 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                 >
                   ✕
                 </button>
+              </span>
+            )}
+            {tenderFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 font-medium">
+                Tender: {tenderFilter === 'cash' ? 'Cash Only' : tenderFilter === 'bank' ? 'Bank Only' : 'Split Payments'}
               </span>
             )}
             {dateFilterMode === 'range' && (filterStartDate || filterEndDate) && (
@@ -755,7 +913,10 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
           </div>
         ) : (
           sortedPurchases.map((pur) => {
-            const payInfo = PAYMENT_METHOD_LABELS[pur.paymentMethod];
+            const bankAmt = getPurchaseBankAmount(pur);
+            const cashAmt = getPurchaseCashAmount(pur);
+            const payType = getPurchasePaymentType(pur);
+            const bankAcc = pur.bankAccountId ? bankAccounts.find((a) => a.id === pur.bankAccountId) : null;
 
             return (
               <div
@@ -787,18 +948,54 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                         <span>{formatDate(pur.date)}</span>
                       </span>
                       <span aria-hidden="true">·</span>
-                      <span>{payInfo.label}</span>
+
+                      {/* Payment Tender Badge with Cash and/or Bank breakdown */}
+                      {payType === 'split' ? (
+                        <span className="inline-flex items-center gap-1 font-semibold text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                          <Split className="w-3 h-3 text-purple-700" />
+                          <span>
+                            Bank: {formatCurrency(bankAmt, settings.currencySymbol)}{bankAcc ? ` (${bankAcc.name})` : ''} · Cash: {formatCurrency(cashAmt, settings.currencySymbol)}
+                          </span>
+                        </span>
+                      ) : payType === 'bank' ? (
+                        <span className="inline-flex items-center gap-1 font-semibold text-purple-900 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                          <Landmark className="w-3 h-3 text-purple-700" />
+                          <span>Bank: {formatCurrency(bankAmt, settings.currencySymbol)}{bankAcc ? ` (${bankAcc.name})` : ''}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-semibold text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          <Coins className="w-3 h-3 text-emerald-700" />
+                          <span>Cash: {formatCurrency(cashAmt, settings.currencySymbol)}</span>
+                        </span>
+                      )}
+
                       <span aria-hidden="true">·</span>
                       <span className="text-emerald-700 font-medium">{pur.deductiblePercentage}% Deductible</span>
-                      {pur.paymentMethod === 'cash' && pur.totalAmount > 50000 && (
+
+                      {/* Statutory Single Cash Purchase Audit Warning (> 50k ETB on Cash portion) */}
+                      {cashAmt > 50000 && (
                         <>
                           <span aria-hidden="true">·</span>
                           <span
                             className="inline-flex items-center gap-1 font-mono px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300"
-                            title="Audit Flag: Single cash purchase exceeds ETB 50,000 threshold. Under Ethiopian banking & tax regulations, cash transactions over ETB 50,000 must be settled via bank transfer."
+                            title="Audit Flag: Single cash purchase portion exceeds ETB 50,000 threshold. Under Ethiopian banking & tax regulations, cash transactions over ETB 50,000 must be settled via bank transfer."
                           >
                             <AlertTriangle className="w-3 h-3 text-rose-600" />
-                            Flagged: Cash &gt; 50k ETB
+                            Flagged: Cash Portion ({formatCurrency(cashAmt, settings.currencySymbol)}) &gt; 50k ETB
+                          </span>
+                        </>
+                      )}
+
+                      {/* Compliant Split Badge if invoice > 50k but cash <= 50k */}
+                      {payType === 'split' && cashAmt <= 50000 && pur.totalAmount > 50000 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span
+                            className="inline-flex items-center gap-1 font-mono px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            title="Compliant: Invoice total exceeds ETB 50k, but cash payment was kept under 50k and remainder settled via banking channels."
+                          >
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                            Compliant Split (Cash ≤ 50k)
                           </span>
                         </>
                       )}
@@ -981,9 +1178,9 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <span className="text-xs text-stone-600">Total Amount ({settings.currencySymbol.trim()}) *</span>
+              <span className="text-xs text-stone-600">Total Purchase Amount ({settings.currencySymbol.trim()}) *</span>
               <input
                 type="number"
                 step="0.01"
@@ -991,80 +1188,323 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                 inputMode="decimal"
                 required
                 value={totalInputAmount || ''}
-                onChange={(e) => setTotalInputAmount(parseFloat(e.target.value || '0'))}
+                onChange={(e) => handleTotalAmountChange(parseFloat(e.target.value || '0'))}
                 placeholder="0.00"
                 className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 font-bold font-tabular focus:outline-none focus:border-orange-700"
               />
             </div>
 
-            <div>
-              <span className="text-xs text-stone-600">Input Tax (%)</span>
-              <input
-                type="number"
-                min="0"
-                max="40"
-                inputMode="numeric"
-                value={taxRatePercent}
-                onChange={(e) => setTaxRatePercent(parseInt(e.target.value || '0', 10))}
-                className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 font-tabular"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <span className="text-xs text-stone-600">Tax Deductibility</span>
-              <select
-                value={deductibility}
-                onChange={(e) => setDeductibility(e.target.value as TaxDeductibility)}
-                className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
-              >
-                <option value="fully_deductible">100% Tax Deductible</option>
-                <option value="partially_deductible">50% Meals / Limited</option>
-                <option value="non_deductible">Non-Deductible</option>
-              </select>
-            </div>
-
-            <div>
-              <span className="text-xs text-stone-600">Payment Tender</span>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
-              >
-                <option value="cash">Cash / Petty Cash Drawer</option>
-                <option value="bank_transfer">Bank Transfer / Cheque</option>
-              </select>
-            </div>
-          </div>
-
-          {paymentMethod !== 'cash' && bankAccounts.length > 0 && (
-            <div>
-              <span className="text-xs text-stone-600">Paid From Bank Account</span>
-              <select
-                value={selectedBankId || bankAccounts[0]?.id || ''}
-                onChange={(e) => setSelectedBankId(e.target.value)}
-                className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900"
-              >
-                {bankAccounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.name} ({acc.bankName})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Statutory Single Cash Purchase Limit Warning (> 50k ETB) */}
-          {paymentMethod === 'cash' && Number(totalAmount) > 50000 && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-900">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <span className="font-bold">MoR Audit Warning (Single Cash Purchase &gt; ETB 50,000):</span>{' '}
-                This purchase amount of {formatCurrency(Number(totalAmount), settings.currencySymbol)} exceeds the statutory ETB 50,000 ceiling for cash transactions. Under NBE &amp; MoR directives, only single cash purchases exceeding ETB 50,000 are flagged and prohibited from cash settlement. Switch tender to &quot;Bank Transfer / Cheque&quot; to avoid tax audit disallowance.
+                <span className="text-xs text-stone-600">Input Tax (%)</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="40"
+                  inputMode="numeric"
+                  value={taxRatePercent}
+                  onChange={(e) => setTaxRatePercent(parseInt(e.target.value || '0', 10))}
+                  className="mt-1 w-full px-2.5 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 font-tabular"
+                />
+              </div>
+
+              <div>
+                <span className="text-xs text-stone-600">Deductibility</span>
+                <select
+                  value={deductibility}
+                  onChange={(e) => setDeductibility(e.target.value as TaxDeductibility)}
+                  className="mt-1 w-full px-2 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs text-stone-900 truncate"
+                >
+                  <option value="fully_deductible">100% Tax Deductible</option>
+                  <option value="partially_deductible">50% Meals Limit</option>
+                  <option value="non_deductible">Non-Deductible</option>
+                </select>
               </div>
             </div>
-          )}
+          </div>
+
+          {/* Payment Tender: Cash, Bank Transfer, or Split Bank & Cash */}
+          <div className="p-4 rounded-2xl bg-white border-2 border-stone-200 focus-within:border-orange-600 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                <ArrowRightLeft className="w-4 h-4 text-orange-700" />
+                <span>How was this expense paid? (Bank and/or Cash) *</span>
+              </label>
+              <span className="text-[11px] font-semibold text-stone-500">
+                {paymentTender === 'cash'
+                  ? 'Paid 100% Cash'
+                  : paymentTender === 'bank'
+                  ? 'Paid 100% Bank'
+                  : 'Paid via Bank & Cash (Split)'}
+              </span>
+            </div>
+
+            {/* 3-Way Segment Switcher */}
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-stone-100 border border-stone-200 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => handleSwitchTender('cash')}
+                className={`py-2 px-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  paymentTender === 'cash'
+                    ? 'bg-white text-emerald-800 shadow-xs font-bold'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Cash Only</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSwitchTender('bank')}
+                className={`py-2 px-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  paymentTender === 'bank'
+                    ? 'bg-white text-purple-900 shadow-xs font-bold'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <Landmark className="w-3.5 h-3.5 text-purple-700" />
+                <span>Bank Only</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSwitchTender('split')}
+                className={`py-2 px-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  paymentTender === 'split'
+                    ? 'bg-white text-orange-950 shadow-xs font-bold'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <Split className="w-3.5 h-3.5 text-orange-700" />
+                <span>Bank &amp; Cash</span>
+              </button>
+            </div>
+
+            {/* Bank Only Mode: Select Bank Account */}
+            {paymentTender === 'bank' && (
+              <div className="space-y-2 pt-1 animate-fadeIn">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-purple-950 flex items-center gap-1.5">
+                    <Landmark className="w-3.5 h-3.5 text-purple-700" />
+                    <span>Paid From Business Bank Account:</span>
+                  </span>
+                  <span className="font-bold text-purple-900 font-tabular">
+                    {formatCurrency(totalAmount, settings.currencySymbol)}
+                  </span>
+                </div>
+                {bankAccounts.length > 0 ? (
+                  <select
+                    value={selectedBankId || bankAccounts[0]?.id || ''}
+                    onChange={(e) => setSelectedBankId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl bg-purple-50/50 border border-purple-200 text-xs text-stone-900 focus:outline-none focus:border-purple-600 font-medium"
+                  >
+                    {bankAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.name} — {acc.bankName} (Balance: {formatCurrency(acc.currentBalance, settings.currencySymbol)})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-[11px] text-stone-500 italic">
+                    Primary CBE checking account will be linked automatically.
+                  </p>
+                )}
+                <p className="text-[11px] text-stone-500">
+                  Transferred via CBE Birr, Telebirr, Awash, or Cheque. Deducts directly from your bank ledger.
+                </p>
+              </div>
+            )}
+
+            {/* Cash Only Mode: Drawer Notice */}
+            {paymentTender === 'cash' && (
+              <div className="space-y-1 pt-1 animate-fadeIn">
+                <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                  <span className="font-semibold text-emerald-950 flex items-center gap-1.5">
+                    <Coins className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Deducted from Cash Register Drawer:</span>
+                  </span>
+                  <span className="font-bold text-emerald-950 font-tabular text-sm">
+                    {formatCurrency(totalAmount, settings.currencySymbol)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-500">
+                  Physical cash paid out of daily retail register or petty cash safe.
+                </p>
+              </div>
+            )}
+
+            {/* Split Mode: Bank & Cash Breakdown */}
+            {paymentTender === 'split' && (
+              <div className="space-y-3 pt-1 animate-fadeIn">
+                {/* Quick Split Action Buttons */}
+                <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+                  <span className="font-semibold text-stone-600">Quick Split:</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleQuick5050}
+                      className="px-2 py-0.5 rounded-md bg-stone-100 hover:bg-stone-200 text-stone-800 font-medium border border-stone-200 transition cursor-pointer"
+                    >
+                      50 / 50 Split
+                    </button>
+                    {totalAmount > 50000 && (
+                      <button
+                        type="button"
+                        onClick={handleQuickMaxCash}
+                        className="px-2 py-0.5 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold border border-amber-300 transition cursor-pointer"
+                        title="Set Cash to ETB 50,000 legal ceiling and Bank to remainder"
+                      >
+                        Max Cash (50k Limit)
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleQuickAllBank}
+                      className="px-2 py-0.5 rounded-md bg-purple-50 hover:bg-purple-100 text-purple-900 font-medium border border-purple-200 transition cursor-pointer"
+                    >
+                      All Bank
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleQuickAllCash}
+                      className="px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-medium border border-emerald-200 transition cursor-pointer"
+                    >
+                      All Cash
+                    </button>
+                  </div>
+                </div>
+
+                {/* Input 1: Bank Portion */}
+                <div className="p-3 rounded-xl bg-purple-50/50 border border-purple-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-purple-950 flex items-center gap-1.5">
+                      <Landmark className="w-3.5 h-3.5 text-purple-700" />
+                      <span>Amount Paid via Bank Transfer ({settings.currencySymbol.trim()})</span>
+                    </label>
+                    <span className="text-[11px] font-bold text-purple-900 font-tabular">
+                      {totalAmount > 0 ? `${Math.round((bankAmount / totalAmount) * 100)}%` : '0%'}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={totalAmount}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={bankAmount || ''}
+                    onChange={(e) => handleBankAmountChange(parseFloat(e.target.value || '0'))}
+                    className="w-full text-lg font-bold text-stone-900 font-tabular bg-white px-3 py-1.5 rounded-lg border border-purple-200 focus:outline-none focus:border-purple-600"
+                  />
+                  {bankAccounts.length > 0 && (
+                    <div className="pt-1">
+                      <span className="text-[11px] text-stone-600 block mb-1">Deduct from account:</span>
+                      <select
+                        value={selectedBankId || bankAccounts[0]?.id || ''}
+                        onChange={(e) => setSelectedBankId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-xs text-stone-900 focus:outline-none font-medium"
+                      >
+                        {bankAccounts.map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.name} — {acc.bankName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Input 2: Cash Portion (Automatically synced) */}
+                <div className="p-3 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Amount Paid via Physical Cash ({settings.currencySymbol.trim()})</span>
+                    </label>
+                    <span className="text-[11px] font-bold text-emerald-900 font-tabular">
+                      {totalAmount > 0 ? `${Math.round((cashAmount / totalAmount) * 100)}%` : '0%'}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={totalAmount}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={cashAmount || ''}
+                    onChange={(e) => handleCashAmountChange(parseFloat(e.target.value || '0'))}
+                    className="w-full text-lg font-bold text-stone-900 font-tabular bg-white px-3 py-1.5 rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-stone-500 pt-0.5">
+                    <span>Deducted from cash register drawer count</span>
+                    <span className="font-semibold text-emerald-900">
+                      Auto-balances with Total
+                    </span>
+                  </div>
+                </div>
+
+                {/* Visual Ratio Bar */}
+                {totalAmount > 0 && (
+                  <div className="space-y-1">
+                    <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden flex">
+                      <div
+                        style={{ width: `${Math.min(100, (bankAmount / totalAmount) * 100)}%` }}
+                        className="bg-purple-600 transition-all duration-300"
+                        title={`Bank: ${formatCurrency(bankAmount, settings.currencySymbol)}`}
+                      />
+                      <div
+                        style={{ width: `${Math.min(100, (cashAmount / totalAmount) * 100)}%` }}
+                        className="bg-emerald-600 transition-all duration-300"
+                        title={`Cash: ${formatCurrency(cashAmount, settings.currencySymbol)}`}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-stone-500 font-tabular">
+                      <span className="text-purple-800 font-semibold">
+                        Bank: {formatCurrency(bankAmount, settings.currencySymbol)}
+                      </span>
+                      <span className="text-emerald-800 font-semibold">
+                        Cash: {formatCurrency(cashAmount, settings.currencySymbol)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Statutory Single Cash Purchase Audit Rule (> 50k ETB on Cash portion) */}
+            {cashAmount > 50000 && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 flex items-start gap-2.5 text-xs text-rose-950 animate-fadeIn">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold">
+                    MoR Audit Flag: Cash Portion ({formatCurrency(cashAmount, settings.currencySymbol)}) Exceeds ETB 50,000 Limit
+                  </p>
+                  <p className="text-[11px] text-rose-900 leading-relaxed">
+                    Under Ethiopian tax directives (Proc. 979/2016 &amp; NBE directives), only single cash purchases exceeding ETB 50,000 are disallowed.
+                    Increase the Bank Transfer portion to at least {formatCurrency(totalAmount - 50000, settings.currencySymbol)} so cash stays within the ETB 50,000 ceiling.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleQuickMaxCash}
+                    className="mt-1 px-2.5 py-1 rounded-md bg-rose-800 text-white font-semibold text-[11px] hover:bg-rose-900 transition cursor-pointer"
+                  >
+                    Auto-Adjust to ETB 50,000 Cash Limit
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {cashAmount > 0 && cashAmount <= 50000 && totalAmount > 50000 && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 flex items-center gap-2 text-xs text-emerald-950 animate-fadeIn">
+                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>
+                  <strong>Compliant Split:</strong> Cash portion ({formatCurrency(cashAmount, settings.currencySymbol)}) is within the statutory ETB 50,000 limit. Input VAT deduction is safeguarded.
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Receipt Image / Scanned Invoice Attachment (Optional) */}
           <div className="space-y-2 pt-1 border-t border-stone-100">

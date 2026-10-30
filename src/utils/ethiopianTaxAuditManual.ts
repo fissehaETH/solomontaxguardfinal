@@ -16,6 +16,7 @@ import {
   SaleTransaction,
   TaxSettings,
 } from '../types';
+import { getPurchaseCashAmount } from './formatters';
 
 export interface SectorBenchmark {
   code: string;
@@ -586,7 +587,7 @@ export function evaluateMoRChecklist(
 
   // 5. Statutory Single Cash Purchase Ceiling (Directive / MoR Rule: Only single cash purchase exceeding ETB 50,000 flagged)
   const cashPurchasesExceeding50k = purchases.filter(
-    (p) => p.paymentMethod === 'cash' && p.totalAmount > 50000
+    (p) => getPurchaseCashAmount(p) > 50000
   );
   items.push({
     id: 'mor-single-cash-purchase-ceiling',

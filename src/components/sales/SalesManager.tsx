@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   SaleTransaction,
+  PurchaseItem,
   BankAccount,
   TaxSettings,
   DailyRegisterClose,
@@ -11,6 +12,7 @@ import {
   formatDate,
   getSaleCashAmount,
   getSaleBankTransferAmount,
+  getPurchaseCashAmount,
 } from '../../utils/formatters';
 import {
   getTodayLocalDateString,
@@ -44,6 +46,7 @@ interface SalesManagerProps {
   bankAccounts: BankAccount[];
   dailyCloses: DailyRegisterClose[];
   settings: TaxSettings;
+  purchases?: PurchaseItem[];
   onAddSale: (sale: SaleTransaction) => void;
   onUpdateSale: (sale: SaleTransaction) => void;
   onDeleteSale: (id: string) => void;
@@ -62,6 +65,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
   bankAccounts,
   dailyCloses,
   settings,
+  purchases = [],
   onAddSale,
   onUpdateSale,
   onDeleteSale,
@@ -481,7 +485,13 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
   const closeBankTransferSales = salesOnCloseDate.reduce((acc, s) => acc + getSaleTransferAmount(s), 0);
   const closeGrossSales = salesOnCloseDate.reduce((acc, s) => acc + s.totalAmount, 0);
   const closeTaxCollected = salesOnCloseDate.reduce((acc, s) => acc + s.taxAmount, 0);
-  const expectedCashInDrawer = openingFloat + closeCashSales;
+
+  // Cash paid out of the register/drawer for supplier purchases and business expenses on this date
+  const purchasesOnCloseDate = (purchases || []).filter((p) => p.date === closeDate);
+  const closeCashPurchases = purchasesOnCloseDate.reduce((acc, p) => acc + getPurchaseCashAmount(p), 0);
+
+  // Expected Cash in Drawer = Opening Float + Cash Collected from Sales - Physical Cash Paid for Purchases
+  const expectedCashInDrawer = Math.max(0, openingFloat + closeCashSales - closeCashPurchases);
   const cashVariance = actualCashCounted - expectedCashInDrawer;
 
   const handleSaveDailyClose = (e: React.FormEvent) => {
@@ -496,7 +506,7 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
       bankTransferSales: closeBankTransferSales,
       totalGrossSales: closeGrossSales,
       totalTaxCollected: closeTaxCollected,
-      cashPaidOutForPurchases: 0,
+      cashPaidOutForPurchases: closeCashPurchases,
       actualCashCounted,
       cashVariance,
       bankDepositAmount,
@@ -1667,8 +1677,16 @@ export const SalesManager: React.FC<SalesManagerProps> = ({
                 +{formatCurrency(closeCashSales, settings.currencySymbol)}
               </span>
             </div>
+            {closeCashPurchases > 0 && (
+              <div className="flex justify-between text-rose-700 font-semibold">
+                <span>Cash Paid Out for Purchases/Expenses:</span>
+                <span className="font-tabular">
+                  -{formatCurrency(closeCashPurchases, settings.currencySymbol)}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between font-bold text-stone-900 pt-1 border-t border-stone-200">
-              <span>Expected Cash in Box (Starting Cash + Cash Sales):</span>
+              <span>Expected Cash in Box (Starting + Sales Cash {closeCashPurchases > 0 ? '- Cash Paid' : ''}):</span>
               <span className="font-tabular">
                 {formatCurrency(expectedCashInDrawer, settings.currencySymbol)}
               </span>
