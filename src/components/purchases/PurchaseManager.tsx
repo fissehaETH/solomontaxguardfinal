@@ -95,23 +95,27 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
 
-const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string => {
+const generateUniqueInvoiceNumber = (
+  existingPurchases: PurchaseItem[],
+  prefix: 'M-' | 'FS-' = 'M-'
+): string => {
   const existingSet = new Set(
     existingPurchases.map((p) => (p.invoiceNumber || '').trim().toLowerCase())
   );
   for (let i = 0; i < 100; i++) {
-    const candidate = `FS-${Math.floor(10000 + Math.random() * 90000)}`;
+    const candidate = `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
     if (!existingSet.has(candidate.toLowerCase())) {
       return candidate;
     }
   }
-  return `FS-${Date.now().toString().slice(-6)}`;
+  return `${prefix}${Date.now().toString().slice(-6)}`;
 };
 
   // Editing Purchase State
   const [editingPurchase, setEditingPurchase] = useState<PurchaseItem | null>(null);
 
-  // Add / Edit Purchase Form State
+  // Add / Edit Purchase Form State: Manual invoices default to starting with 'M-'
+  const [invoiceType, setInvoiceType] = useState<'manual' | 'fiscal'>('manual');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [purchaseDate, setPurchaseDate] = useState(today);
@@ -221,6 +225,12 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
   const openEditPurchaseModal = (pur: PurchaseItem) => {
     setEditingPurchase(pur);
     setInvoiceNumber(pur.invoiceNumber);
+    const upper = (pur.invoiceNumber || '').trim().toUpperCase();
+    if (upper.startsWith('FS')) {
+      setInvoiceType('fiscal');
+    } else {
+      setInvoiceType('manual');
+    }
     setPurchaseDate(pur.date);
     setVendorName(pur.vendorName);
     setVendorTin(pur.vendorTin || '');
@@ -254,7 +264,8 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
 
   const openNewPurchaseModal = () => {
     setEditingPurchase(null);
-    setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+    setInvoiceType('manual');
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M-'));
     setInvoiceError(null);
     setPurchaseDate(today);
     setVendorName('');
@@ -274,12 +285,40 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
     setIsAddPurchaseOpen(true);
   };
 
+  const handleToggleInvoiceType = (type: 'manual' | 'fiscal') => {
+    setInvoiceType(type);
+    if (invoiceError) setInvoiceError(null);
+
+    const trimmed = invoiceNumber.trim();
+    if (type === 'manual') {
+      if (trimmed.toUpperCase().startsWith('FS-')) {
+        setInvoiceNumber(`M-${trimmed.substring(3)}`);
+      } else if (trimmed.toUpperCase().startsWith('FS')) {
+        setInvoiceNumber(`M-${trimmed.substring(2)}`);
+      } else if (!trimmed.toUpperCase().startsWith('M')) {
+        setInvoiceNumber(
+          trimmed ? `M-${trimmed.replace(/^[-_\s]+/, '')}` : generateUniqueInvoiceNumber(purchases, 'M-')
+        );
+      }
+    } else {
+      if (trimmed.toUpperCase().startsWith('M-')) {
+        setInvoiceNumber(`FS-${trimmed.substring(2)}`);
+      } else if (trimmed.toUpperCase().startsWith('M')) {
+        setInvoiceNumber(`FS-${trimmed.substring(1)}`);
+      } else if (!trimmed.toUpperCase().startsWith('FS')) {
+        setInvoiceNumber(
+          trimmed ? `FS-${trimmed.replace(/^[-_\s]+/, '')}` : generateUniqueInvoiceNumber(purchases, 'FS-')
+        );
+      }
+    }
+  };
+
   // Auto-generate unique invoice number if modal opens with empty invoice
   useEffect(() => {
     if (isAddPurchaseOpen && !editingPurchase && !invoiceNumber) {
-      setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+      setInvoiceNumber(generateUniqueInvoiceNumber(purchases, invoiceType === 'manual' ? 'M-' : 'FS-'));
     }
-  }, [isAddPurchaseOpen, editingPurchase, purchases, invoiceNumber]);
+  }, [isAddPurchaseOpen, editingPurchase, purchases, invoiceNumber, invoiceType]);
 
   // Real-time check to detect and reject duplicate invoice numbers
   const trimmedInvoice = invoiceNumber.trim();
@@ -388,6 +427,12 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
       if (extracted.invoiceNumber) {
         const cleanInv = extracted.invoiceNumber.trim();
         setInvoiceNumber(cleanInv);
+        const upper = cleanInv.toUpperCase();
+        if (upper.startsWith('M')) {
+          setInvoiceType('manual');
+        } else if (upper.startsWith('FS')) {
+          setInvoiceType('fiscal');
+        }
         const dup = purchases.find(
           (p) =>
             p.invoiceNumber.trim().toLowerCase() === cleanInv.toLowerCase() &&
@@ -465,10 +510,15 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
     e.preventDefault();
     if (totalAmount <= 0) return;
 
-    const cleanInvoice = invoiceNumber.trim();
+    let cleanInvoice = invoiceNumber.trim();
     if (!cleanInvoice) {
-      setInvoiceError('Invoice number / FS number is required.');
+      setInvoiceError('Invoice number / receipt number is required.');
       return;
+    }
+
+    // When registering manual invoices, ensure invoice number starts with M
+    if (invoiceType === 'manual' && !cleanInvoice.toUpperCase().startsWith('M')) {
+      cleanInvoice = `M-${cleanInvoice.replace(/^[-_\s]+/, '')}`;
     }
 
     // Strict rejection of duplicate invoice numbers
@@ -540,7 +590,8 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
     setEditingPurchase(null);
     setIsAddPurchaseOpen(false);
 
-    setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+    setInvoiceType('manual');
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M-'));
     setInvoiceError(null);
     setVendorName('');
     setVendorTin('');
@@ -1226,30 +1277,74 @@ const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string 
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-stone-600">Invoice Number / FS Number *</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1">
+                <span className="text-xs font-semibold text-stone-700">Invoice Number *</span>
+                
+                {/* Invoice Type Switcher: Manual (starts with M) vs Fiscal Machine (starts with FS) */}
+                <div className="inline-flex rounded-lg bg-stone-100 p-0.5 border border-stone-200 text-[11px] self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleInvoiceType('manual')}
+                    className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
+                      invoiceType === 'manual'
+                        ? 'bg-white text-orange-900 shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    Manual (M-)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleInvoiceType('fiscal')}
+                    className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
+                      invoiceType === 'fiscal'
+                        ? 'bg-white text-purple-900 shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    Fiscal (FS-)
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={invoiceNumber}
+                  onChange={(e) => {
+                    setInvoiceNumber(e.target.value);
+                    if (invoiceError) setInvoiceError(null);
+                  }}
+                  placeholder={invoiceType === 'manual' ? 'e.g. M-00048291' : 'e.g. FS-00048291'}
+                  className={`w-full px-3 py-2.5 rounded-xl font-mono text-xs font-bold focus:outline-none transition ${
+                    duplicatePurchase || invoiceError
+                      ? 'bg-rose-50 border-2 border-rose-500 text-rose-900 focus:border-rose-600 ring-2 ring-rose-200'
+                      : 'bg-stone-50 border border-stone-300 text-stone-900 focus:border-orange-700'
+                  }`}
+                />
                 {duplicatePurchase && (
-                  <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                  <span className="absolute right-2.5 top-2.5 text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
-                    Duplicate Detected
+                    Duplicate
                   </span>
                 )}
               </div>
-              <input
-                type="text"
-                required
-                value={invoiceNumber}
-                onChange={(e) => {
-                  setInvoiceNumber(e.target.value);
-                  if (invoiceError) setInvoiceError(null);
-                }}
-                placeholder="e.g. FS-00048291"
-                className={`mt-1 w-full px-3 py-2.5 rounded-xl font-mono text-xs font-bold focus:outline-none transition ${
-                  duplicatePurchase || invoiceError
-                    ? 'bg-rose-50 border-2 border-rose-500 text-rose-900 focus:border-rose-600 ring-2 ring-rose-200'
-                    : 'bg-stone-50 border border-stone-300 text-stone-900 focus:border-orange-700'
-                }`}
-              />
+
+              {/* Notice / quick action if manual invoice does not start with M */}
+              {invoiceType === 'manual' && trimmedInvoice && !trimmedInvoice.toUpperCase().startsWith('M') && !duplicatePurchase && (
+                <div className="mt-1 flex items-center justify-between text-[11px] px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+                  <span>Manual invoices must start with <strong>M</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceNumber(`M-${trimmedInvoice.replace(/^[-_\s]+/, '')}`)}
+                    className="font-bold underline text-amber-950 hover:text-amber-800 cursor-pointer ml-1"
+                  >
+                    Format as M-{trimmedInvoice}
+                  </button>
+                </div>
+              )}
+
               {(duplicatePurchase || invoiceError) && (
                 <div className="mt-1.5 p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2 text-rose-900 text-xs leading-normal animate-fadeIn">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
