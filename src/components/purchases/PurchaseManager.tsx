@@ -36,6 +36,7 @@ import {
   Calendar,
   Filter,
   AlertTriangle,
+  AlertCircle,
   Landmark,
   Coins,
   Split,
@@ -94,11 +95,25 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
 
+const generateUniqueInvoiceNumber = (existingPurchases: PurchaseItem[]): string => {
+  const existingSet = new Set(
+    existingPurchases.map((p) => (p.invoiceNumber || '').trim().toLowerCase())
+  );
+  for (let i = 0; i < 100; i++) {
+    const candidate = `FS-${Math.floor(10000 + Math.random() * 90000)}`;
+    if (!existingSet.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+  return `FS-${Date.now().toString().slice(-6)}`;
+};
+
   // Editing Purchase State
   const [editingPurchase, setEditingPurchase] = useState<PurchaseItem | null>(null);
 
   // Add / Edit Purchase Form State
-  const [invoiceNumber, setInvoiceNumber] = useState(`FS-${Math.floor(10000 + Math.random() * 90000)}`);
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [purchaseDate, setPurchaseDate] = useState(today);
   const [vendorName, setVendorName] = useState('');
   const [vendorTin, setVendorTin] = useState('');
@@ -226,6 +241,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setReceiptImage(pur.receiptImage || '');
     setNotes(pur.notes || '');
     setAiNotice(null);
+    setInvoiceError(null);
     setIsAddPurchaseOpen(true);
   };
 
@@ -238,7 +254,8 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
   const openNewPurchaseModal = () => {
     setEditingPurchase(null);
-    setInvoiceNumber(`FS-${Math.floor(10000 + Math.random() * 90000)}`);
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+    setInvoiceError(null);
     setPurchaseDate(today);
     setVendorName('');
     setVendorTin('');
@@ -256,6 +273,23 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setAiNotice(null);
     setIsAddPurchaseOpen(true);
   };
+
+  // Auto-generate unique invoice number if modal opens with empty invoice
+  useEffect(() => {
+    if (isAddPurchaseOpen && !editingPurchase && !invoiceNumber) {
+      setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+    }
+  }, [isAddPurchaseOpen, editingPurchase, purchases, invoiceNumber]);
+
+  // Real-time check to detect and reject duplicate invoice numbers
+  const trimmedInvoice = invoiceNumber.trim();
+  const duplicatePurchase = trimmedInvoice
+    ? purchases.find(
+        (p) =>
+          p.invoiceNumber.trim().toLowerCase() === trimmedInvoice.toLowerCase() &&
+          (!editingPurchase || p.id !== editingPurchase.id)
+      )
+    : undefined;
 
   // Math from Total Amount
   const rateDecimal = taxRatePercent / 100;
@@ -351,7 +385,22 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
       if (extracted.vendorName) setVendorName(extracted.vendorName);
       if (extracted.vendorTin) setVendorTin(extracted.vendorTin);
-      if (extracted.invoiceNumber) setInvoiceNumber(extracted.invoiceNumber);
+      if (extracted.invoiceNumber) {
+        const cleanInv = extracted.invoiceNumber.trim();
+        setInvoiceNumber(cleanInv);
+        const dup = purchases.find(
+          (p) =>
+            p.invoiceNumber.trim().toLowerCase() === cleanInv.toLowerCase() &&
+            (!editingPurchase || p.id !== editingPurchase.id)
+        );
+        if (dup) {
+          setInvoiceError(
+            `Rejected: Scanned invoice number "${cleanInv}" is already registered for "${dup.vendorName}" on ${formatDate(dup.date)} (${formatCurrency(dup.totalAmount, settings.currencySymbol)}). Duplicate invoices cannot be recorded.`
+          );
+        } else {
+          setInvoiceError(null);
+        }
+      }
       if (extracted.date) setPurchaseDate(extracted.date);
       if (typeof extracted.amount === 'number' && extracted.amount > 0) {
         handleTotalAmountChange(extracted.amount);
@@ -416,6 +465,26 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     e.preventDefault();
     if (totalAmount <= 0) return;
 
+    const cleanInvoice = invoiceNumber.trim();
+    if (!cleanInvoice) {
+      setInvoiceError('Invoice number / FS number is required.');
+      return;
+    }
+
+    // Strict rejection of duplicate invoice numbers
+    const existingDuplicate = purchases.find(
+      (p) =>
+        p.invoiceNumber.trim().toLowerCase() === cleanInvoice.toLowerCase() &&
+        (!editingPurchase || p.id !== editingPurchase.id)
+    );
+
+    if (existingDuplicate) {
+      setInvoiceError(
+        `Rejected: Invoice number "${cleanInvoice}" is already registered for supplier "${existingDuplicate.vendorName}" on ${formatDate(existingDuplicate.date)} (${formatCurrency(existingDuplicate.totalAmount, settings.currencySymbol)}). Duplicate invoice numbers cannot be saved.`
+      );
+      return;
+    }
+
     const deductiblePercentage = getDeductiblePercent(deductibility);
 
     let resolvedBank = 0;
@@ -438,7 +507,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
     const purchaseRecord: PurchaseItem = {
       id: editingPurchase ? editingPurchase.id : `pur-${Date.now()}`,
-      invoiceNumber: invoiceNumber.trim() || `FS-${Math.floor(10000 + Math.random() * 90000)}`,
+      invoiceNumber: cleanInvoice,
       date: purchaseDate,
       vendorName: vendorName.trim() || 'Supplier',
       vendorTin: vendorTin.trim() || undefined,
@@ -471,7 +540,8 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
     setEditingPurchase(null);
     setIsAddPurchaseOpen(false);
 
-    setInvoiceNumber(`FS-${Math.floor(10000 + Math.random() * 90000)}`);
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases));
+    setInvoiceError(null);
     setVendorName('');
     setVendorTin('');
     setItemName('Stock Materials & Inventory');
@@ -1154,17 +1224,47 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <span className="text-xs text-stone-600">Invoice Number / FS Number *</span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-stone-600">Invoice Number / FS Number *</span>
+                {duplicatePurchase && (
+                  <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Duplicate Detected
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 required
                 value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
+                onChange={(e) => {
+                  setInvoiceNumber(e.target.value);
+                  if (invoiceError) setInvoiceError(null);
+                }}
                 placeholder="e.g. FS-00048291"
-                className="mt-1 w-full px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-300 text-xs font-mono text-stone-900 font-bold focus:outline-none focus:border-orange-700"
+                className={`mt-1 w-full px-3 py-2.5 rounded-xl font-mono text-xs font-bold focus:outline-none transition ${
+                  duplicatePurchase || invoiceError
+                    ? 'bg-rose-50 border-2 border-rose-500 text-rose-900 focus:border-rose-600 ring-2 ring-rose-200'
+                    : 'bg-stone-50 border border-stone-300 text-stone-900 focus:border-orange-700'
+                }`}
               />
+              {(duplicatePurchase || invoiceError) && (
+                <div className="mt-1.5 p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2 text-rose-900 text-xs leading-normal animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-semibold block text-rose-950">
+                      Rejected: Duplicate Invoice Number
+                    </strong>
+                    <span className="text-[11px] text-rose-800">
+                      {duplicatePurchase
+                        ? `Invoice "${duplicatePurchase.invoiceNumber}" is already registered for supplier "${duplicatePurchase.vendorName}" on ${formatDate(duplicatePurchase.date)} (${formatCurrency(duplicatePurchase.totalAmount, settings.currencySymbol)}). Duplicate invoice entries are rejected.`
+                        : invoiceError}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <span className="text-xs text-stone-600">Purchase Date</span>
@@ -1730,11 +1830,32 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             </div>
           </div>
 
+          {duplicatePurchase && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 flex items-start gap-2.5 text-xs text-rose-950 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block font-bold">Action Blocked: Duplicate Invoice Number</strong>
+                <span className="text-[11px] text-rose-800">
+                  Invoice &ldquo;{duplicatePurchase.invoiceNumber}&rdquo; is already assigned to {duplicatePurchase.vendorName}. Please provide a unique invoice number to record this purchase.
+                </span>
+              </div>
+            </div>
+          )}
+
           <button
             type="submit"
-            className="w-full py-3 rounded-xl bg-orange-700 text-white font-semibold text-xs hover:bg-orange-800 transition"
+            disabled={Boolean(duplicatePurchase)}
+            className={`w-full py-3 rounded-xl font-semibold text-xs transition cursor-pointer shadow-xs ${
+              duplicatePurchase
+                ? 'bg-stone-300 text-stone-500 cursor-not-allowed opacity-75'
+                : 'bg-orange-700 text-white hover:bg-orange-800'
+            }`}
           >
-            {editingPurchase ? 'Update Purchase Entry' : 'Save to Purchase Register'}
+            {duplicatePurchase
+              ? 'Rejected — Duplicate Invoice Number'
+              : editingPurchase
+              ? 'Update Purchase Entry'
+              : 'Save to Purchase Register'}
           </button>
         </form>
       </Modal>

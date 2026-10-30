@@ -957,6 +957,17 @@ export default function App() {
     showToast('Daily sales entry removed.');
   };
   const handleAddPurchase = async (newPurchase: PurchaseItem) => {
+    const cleanInvoice = (newPurchase.invoiceNumber || '').trim();
+    const existingDuplicate = purchases.find(
+      (p) => p.invoiceNumber.trim().toLowerCase() === cleanInvoice.toLowerCase()
+    );
+    if (existingDuplicate) {
+      showToast(
+        `Rejected: Invoice number "${cleanInvoice}" is already registered for supplier "${existingDuplicate.vendorName}".`
+      );
+      return;
+    }
+
     const purchaseId = sanitizeId(newPurchase.id);
     const totalAmount = Number(newPurchase.totalAmount) || 0;
     const bankAmount = getPurchaseBankAmount(newPurchase);
@@ -1141,6 +1152,19 @@ export default function App() {
 
   const handleUpdatePurchase = async (updatedPurchase: PurchaseItem) => {
     const purchaseId = sanitizeId(updatedPurchase.id);
+    const cleanInvoice = (updatedPurchase.invoiceNumber || '').trim();
+    const existingDuplicate = purchases.find(
+      (p) =>
+        p.id !== purchaseId &&
+        p.invoiceNumber.trim().toLowerCase() === cleanInvoice.toLowerCase()
+    );
+    if (existingDuplicate) {
+      showToast(
+        `Rejected: Invoice number "${cleanInvoice}" is already registered for supplier "${existingDuplicate.vendorName}".`
+      );
+      return;
+    }
+
     const oldPurchase = purchases.find((p) => p.id === purchaseId);
     const totalAmount = Number(updatedPurchase.totalAmount) || 0;
     const newBankAmount = getPurchaseBankAmount(updatedPurchase);
