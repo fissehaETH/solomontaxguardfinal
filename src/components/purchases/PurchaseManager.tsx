@@ -95,26 +95,26 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
 
-const generateUniqueInvoiceNumber = (
-  existingPurchases: PurchaseItem[],
-  prefix: 'M-' | 'FS-' = 'M-'
-): string => {
-  const existingSet = new Set(
-    existingPurchases.map((p) => (p.invoiceNumber || '').trim().toLowerCase())
-  );
-  for (let i = 0; i < 100; i++) {
-    const candidate = `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
-    if (!existingSet.has(candidate.toLowerCase())) {
-      return candidate;
+  const generateUniqueInvoiceNumber = (
+    existingPurchases: PurchaseItem[],
+    prefix: 'M' | 'M-' | 'FS-' = 'M'
+  ): string => {
+    const existingSet = new Set(
+      existingPurchases.map((p) => (p.invoiceNumber || '').trim().toLowerCase())
+    );
+    for (let i = 0; i < 100; i++) {
+      const candidate = `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
+      if (!existingSet.has(candidate.toLowerCase())) {
+        return candidate;
+      }
     }
-  }
-  return `${prefix}${Date.now().toString().slice(-6)}`;
-};
+    return `${prefix}${Date.now().toString().slice(-6)}`;
+  };
 
   // Editing Purchase State
   const [editingPurchase, setEditingPurchase] = useState<PurchaseItem | null>(null);
 
-  // Add / Edit Purchase Form State: Manual invoices default to starting with 'M-'
+  // Add / Edit Purchase Form State: Manual invoices default to starting with 'M'
   const [invoiceType, setInvoiceType] = useState<'manual' | 'fiscal'>('manual');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
@@ -126,7 +126,7 @@ const generateUniqueInvoiceNumber = (
   const [totalInputAmount, setTotalInputAmount] = useState<number>(0);
   const [taxRatePercent, setTaxRatePercent] = useState(Math.round(settings.defaultSalesTaxRate * 100));
   const [deductibility, setDeductibility] = useState<TaxDeductibility>('fully_deductible');
-  
+
   // Payment Tender & Bank / Cash Allocation State
   const [paymentTender, setPaymentTender] = useState<PurchaseTenderType>('cash');
   const [bankAmount, setBankAmount] = useState<number>(0);
@@ -292,12 +292,12 @@ const generateUniqueInvoiceNumber = (
     const trimmed = invoiceNumber.trim();
     if (type === 'manual') {
       if (trimmed.toUpperCase().startsWith('FS-')) {
-        setInvoiceNumber(`M-${trimmed.substring(3)}`);
+        setInvoiceNumber(`M${trimmed.substring(3)}`);
       } else if (trimmed.toUpperCase().startsWith('FS')) {
-        setInvoiceNumber(`M-${trimmed.substring(2)}`);
+        setInvoiceNumber(`M${trimmed.substring(2)}`);
       } else if (!trimmed.toUpperCase().startsWith('M')) {
         setInvoiceNumber(
-          trimmed ? `M-${trimmed.replace(/^[-_\s]+/, '')}` : generateUniqueInvoiceNumber(purchases, 'M-')
+          trimmed ? `M${trimmed.replace(/^[-_\s]+/, '')}` : generateUniqueInvoiceNumber(purchases, 'M')
         );
       }
     } else {
@@ -316,7 +316,7 @@ const generateUniqueInvoiceNumber = (
   // Auto-generate unique invoice number if modal opens with empty invoice
   useEffect(() => {
     if (isAddPurchaseOpen && !editingPurchase && !invoiceNumber) {
-      setInvoiceNumber(generateUniqueInvoiceNumber(purchases, invoiceType === 'manual' ? 'M-' : 'FS-'));
+      setInvoiceNumber(generateUniqueInvoiceNumber(purchases, invoiceType === 'manual' ? 'M' : 'FS-'));
     }
   }, [isAddPurchaseOpen, editingPurchase, purchases, invoiceNumber, invoiceType]);
 
@@ -518,7 +518,7 @@ const generateUniqueInvoiceNumber = (
 
     // When registering manual invoices, ensure invoice number starts with M
     if (invoiceType === 'manual' && !cleanInvoice.toUpperCase().startsWith('M')) {
-      cleanInvoice = `M-${cleanInvoice.replace(/^[-_\s]+/, '')}`;
+      cleanInvoice = `M${cleanInvoice.replace(/^[-_\s]+/, '')}`;
     }
 
     // Strict rejection of duplicate invoice numbers
@@ -591,7 +591,7 @@ const generateUniqueInvoiceNumber = (
     setIsAddPurchaseOpen(false);
 
     setInvoiceType('manual');
-    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M-'));
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M'));
     setInvoiceError(null);
     setVendorName('');
     setVendorTin('');
@@ -612,10 +612,10 @@ const generateUniqueInvoiceNumber = (
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 border-b border-stone-200">
         <div className="min-w-0">
           <p className="text-xs text-stone-500">
-            Wholesale Building Materials & Expenses <span aria-hidden="true">·</span> Input VAT Credit Tracking
+            Wholesale Building Materials &amp; Expenses <span aria-hidden="true">·</span> Input VAT Credit Tracking
           </p>
           <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight mt-1">
-            Purchased Items & COGS Register
+            Purchased Items &amp; COGS Register
           </h1>
         </div>
 
@@ -1174,15 +1174,15 @@ const generateUniqueInvoiceNumber = (
                     <button
                       onClick={() => openEditPurchaseModal(pur)}
                       title="Edit purchase entry"
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-stone-700 bg-stone-100 hover:bg-stone-200 font-semibold transition"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-stone-700 bg-stone-100 hover:bg-stone-200 font-semibold transition cursor-pointer"
                     >
                       <Pencil className="w-3.5 h-3.5 text-orange-700" />
                       <span>Edit</span>
                     </button>
                     <button
                       onClick={() => onDeletePurchase(pur.id)}
-                      className="p-1.5 rounded text-stone-400 hover:text-red-700 hover:bg-red-50 transition"
-                      title="Delete purchase entry"
+                      className="p-1.5 rounded text-stone-400 hover:text-red-700 transition cursor-pointer"
+                      title="Delete purchase"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -1201,20 +1201,20 @@ const generateUniqueInvoiceNumber = (
           setEditingPurchase(null);
           setIsAddPurchaseOpen(false);
         }}
-        title={editingPurchase ? 'Edit Purchase Entry' : 'Log Purchase'}
-        subtitle="Register supplier name, supplier TIN, invoice / FS number, and total amount"
+        title={editingPurchase ? 'Edit Purchase / Expense' : 'Log Purchase or Expense'}
+        subtitle="Record tax-compliant expense invoices to claim input VAT and reduce taxable profits"
       >
-        <form onSubmit={handleSavePurchase} className="space-y-3.5">
+        <form onSubmit={handleSavePurchase} className="space-y-4">
           {aiNotice && (
-            <div className="p-3 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 text-orange-950 text-xs flex items-center justify-between gap-2 animate-fadeIn">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="p-3 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-between gap-2 text-xs text-orange-950 animate-fadeIn">
+              <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-orange-700 shrink-0" />
-                <span className="font-medium truncate">{aiNotice}</span>
+                <span>{aiNotice}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setAiNotice(null)}
-                className="text-stone-400 hover:text-stone-700 p-0.5"
+                className="text-stone-400 hover:text-stone-700 cursor-pointer p-0.5"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1279,7 +1279,7 @@ const generateUniqueInvoiceNumber = (
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1">
                 <span className="text-xs font-semibold text-stone-700">Invoice Number *</span>
-                
+
                 {/* Invoice Type Switcher: Manual (starts with M) vs Fiscal Machine (starts with FS) */}
                 <div className="inline-flex rounded-lg bg-stone-100 p-0.5 border border-stone-200 text-[11px] self-start sm:self-auto">
                   <button
@@ -1287,8 +1287,8 @@ const generateUniqueInvoiceNumber = (
                     onClick={() => {
                       handleToggleInvoiceType('manual');
                       setInvoiceNumber('');
-                        setInvoiceError(null);
-                      }}
+                      setInvoiceError(null);
+                    }}
                     className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
                       invoiceType === 'manual'
                         ? 'bg-white text-orange-900 shadow-xs'
@@ -1303,7 +1303,7 @@ const generateUniqueInvoiceNumber = (
                       handleToggleInvoiceType('fiscal');
                       setInvoiceNumber('');
                       setInvoiceError(null);
-                        }}
+                    }}
                     className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
                       invoiceType === 'fiscal'
                         ? 'bg-white text-purple-900 shadow-xs'
@@ -1324,7 +1324,7 @@ const generateUniqueInvoiceNumber = (
                     setInvoiceNumber(e.target.value);
                     if (invoiceError) setInvoiceError(null);
                   }}
-                  placeholder={invoiceType === 'manual' ? 'e.g. M-00048291' : 'e.g. FS-00048291'}
+                  placeholder={invoiceType === 'manual' ? 'e.g. M00048291 or M-48291' : 'e.g. FS-00048291'}
                   className={`w-full px-3 py-2.5 rounded-xl font-mono text-xs font-bold focus:outline-none transition ${
                     duplicatePurchase || invoiceError
                       ? 'bg-rose-50 border-2 border-rose-500 text-rose-900 focus:border-rose-600 ring-2 ring-rose-200'
@@ -1345,10 +1345,10 @@ const generateUniqueInvoiceNumber = (
                   <span>Manual invoices must start with <strong>M</strong></span>
                   <button
                     type="button"
-                    onClick={() => setInvoiceNumber(`M-${trimmedInvoice.replace(/^[-_\s]+/, '')}`)}
+                    onClick={() => setInvoiceNumber(`M${trimmedInvoice.replace(/^[-_\s]+/, '')}`)}
                     className="font-bold underline text-amber-950 hover:text-amber-800 cursor-pointer ml-1"
                   >
-                    Format as M-{trimmedInvoice}
+                    Format as M{trimmedInvoice}
                   </button>
                 </div>
               )}
@@ -1475,30 +1475,24 @@ const generateUniqueInvoiceNumber = (
                 onClick={() => handleSwitchTender('split')}
                 className={`py-2 px-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
                   paymentTender === 'split'
-                    ? 'bg-white text-orange-950 shadow-xs font-bold'
+                    ? 'bg-white text-amber-950 shadow-xs font-bold'
                     : 'text-stone-600 hover:text-stone-900'
                 }`}
               >
-                <Split className="w-3.5 h-3.5 text-orange-700" />
-                <span>Bank &amp; Cash</span>
+                <Split className="w-3.5 h-3.5 text-amber-700" />
+                <span>Split (Bank &amp; Cash)</span>
               </button>
             </div>
 
-            {/* Bank Only Mode: Select Bank Account */}
+            {/* Bank Only Mode: Account Selector */}
             {paymentTender === 'bank' && (
-              <div className="space-y-2 pt-1 animate-fadeIn">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-purple-950 flex items-center gap-1.5">
-                    <Landmark className="w-3.5 h-3.5 text-purple-700" />
-                    <span>Paid From Business Bank Account:</span>
-                  </span>
-                  <span className="font-bold text-purple-900 font-tabular">
-                    {formatCurrency(totalAmount, settings.currencySymbol)}
-                  </span>
-                </div>
+              <div className="space-y-1.5 pt-1 animate-fadeIn">
+                <label className="text-xs font-semibold text-stone-700 block">
+                  Select Paying Business Bank Account *
+                </label>
                 {bankAccounts.length > 0 ? (
                   <select
-                    value={selectedBankId || bankAccounts[0]?.id || ''}
+                    value={selectedBankId}
                     onChange={(e) => setSelectedBankId(e.target.value)}
                     className="w-full px-3 py-2.5 rounded-xl bg-purple-50/50 border border-purple-200 text-xs text-stone-900 focus:outline-none focus:border-purple-600 font-medium"
                   >
@@ -1601,29 +1595,26 @@ const generateUniqueInvoiceNumber = (
                     className="w-full text-lg font-bold text-stone-900 font-tabular bg-white px-3 py-1.5 rounded-lg border border-purple-200 focus:outline-none focus:border-purple-600"
                   />
                   {bankAccounts.length > 0 && (
-                    <div className="pt-1">
-                      <span className="text-[11px] text-stone-600 block mb-1">Deduct from account:</span>
-                      <select
-                        value={selectedBankId || bankAccounts[0]?.id || ''}
-                        onChange={(e) => setSelectedBankId(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-xs text-stone-900 focus:outline-none font-medium"
-                      >
-                        {bankAccounts.map((acc) => (
-                          <option key={acc.id} value={acc.id}>
-                            {acc.name} — {acc.bankName}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <select
+                      value={selectedBankId}
+                      onChange={(e) => setSelectedBankId(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-xs text-stone-800 focus:outline-none"
+                    >
+                      {bankAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name} — {acc.bankName} (Bal: {formatCurrency(acc.currentBalance, settings.currencySymbol)})
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
 
-                {/* Input 2: Cash Portion (Automatically synced) */}
+                {/* Input 2: Cash Portion */}
                 <div className="p-3 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                       <Coins className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Amount Paid via Physical Cash ({settings.currencySymbol.trim()})</span>
+                      <span>Amount Paid in Cash ({settings.currencySymbol.trim()})</span>
                     </label>
                     <span className="text-[11px] font-bold text-emerald-900 font-tabular">
                       {totalAmount > 0 ? `${Math.round((cashAmount / totalAmount) * 100)}%` : '0%'}
@@ -1640,43 +1631,42 @@ const generateUniqueInvoiceNumber = (
                     onChange={(e) => handleCashAmountChange(parseFloat(e.target.value || '0'))}
                     className="w-full text-lg font-bold text-stone-900 font-tabular bg-white px-3 py-1.5 rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <div className="flex items-center justify-between text-[11px] text-stone-500 pt-0.5">
-                    <span>Deducted from cash register drawer count</span>
-                    <span className="font-semibold text-emerald-900">
-                      Auto-balances with Total
-                    </span>
-                  </div>
+                  <p className="text-[11px] text-stone-500">
+                    Auto-balances: Total ({formatCurrency(totalAmount, settings.currencySymbol)}) = Bank ({formatCurrency(bankAmount, settings.currencySymbol)}) + Cash ({formatCurrency(cashAmount, settings.currencySymbol)})
+                  </p>
                 </div>
 
                 {/* Visual Ratio Bar */}
-                {totalAmount > 0 && (
-                  <div className="space-y-1">
-                    <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden flex">
-                      <div
-                        style={{ width: `${Math.min(100, (bankAmount / totalAmount) * 100)}%` }}
-                        className="bg-purple-600 transition-all duration-300"
-                        title={`Bank: ${formatCurrency(bankAmount, settings.currencySymbol)}`}
-                      />
-                      <div
-                        style={{ width: `${Math.min(100, (cashAmount / totalAmount) * 100)}%` }}
-                        className="bg-emerald-600 transition-all duration-300"
-                        title={`Cash: ${formatCurrency(cashAmount, settings.currencySymbol)}`}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-stone-500 font-tabular">
-                      <span className="text-purple-800 font-semibold">
-                        Bank: {formatCurrency(bankAmount, settings.currencySymbol)}
-                      </span>
-                      <span className="text-emerald-800 font-semibold">
-                        Cash: {formatCurrency(cashAmount, settings.currencySymbol)}
-                      </span>
-                    </div>
+                <div className="space-y-1">
+                  <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden flex">
+                    <div
+                      style={{
+                        width: `${totalAmount > 0 ? Math.min(100, Math.max(0, (bankAmount / totalAmount) * 100)) : 0}%`,
+                      }}
+                      className="bg-purple-600 h-full transition-all duration-200"
+                      title="Bank Transfer Share"
+                    />
+                    <div
+                      style={{
+                        width: `${totalAmount > 0 ? Math.min(100, Math.max(0, (cashAmount / totalAmount) * 100)) : 0}%`,
+                      }}
+                      className="bg-emerald-600 h-full transition-all duration-200"
+                      title="Cash Share"
+                    />
                   </div>
-                )}
+                  <div className="flex justify-between text-[10px] text-stone-500 font-medium">
+                    <span className="text-purple-800">
+                      Bank: {totalAmount > 0 ? `${Math.round((bankAmount / totalAmount) * 100)}%` : '0%'}
+                    </span>
+                    <span className="text-emerald-800">
+                      Cash: {totalAmount > 0 ? `${Math.round((cashAmount / totalAmount) * 100)}%` : '0%'}
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Statutory Single Cash Purchase Audit Rule (> 50k ETB on Cash portion) */}
+            {/* Smart 50k Statutory Single Cash Purchase Audit Check */}
             {cashAmount > 50000 && (
               <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 flex items-start gap-2.5 text-xs text-rose-950 animate-fadeIn">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -1751,66 +1741,79 @@ const generateUniqueInvoiceNumber = (
                       onClick={() =>
                         setPreviewReceiptModal({
                           image: receiptImage,
-                          title: vendorName ? `${vendorName} Receipt` : 'Receipt Preview',
+                          title: vendorName || 'Receipt Photo',
                           invoiceNumber,
                           date: purchaseDate,
                           amount: totalAmount,
                         })
                       }
-                      title="Click to view full receipt image"
-                      className="relative w-14 h-14 rounded-lg overflow-hidden border border-stone-300 shadow-sm shrink-0 group cursor-pointer bg-white"
+                      className="w-12 h-12 rounded-lg bg-stone-200 overflow-hidden relative group shrink-0 border border-stone-300"
                     >
-                      <img
-                        src={receiptImage}
-                        alt="Receipt Preview"
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover transition-transform group-hover:scale-110"
-                      />
-                      <div className="absolute inset-0 bg-stone-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white">
-                        <Eye className="w-4 h-4" />
+                      <img src={receiptImage} alt="Receipt preview" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                        <Eye className="w-4 h-4 text-white" />
                       </div>
                     </button>
-                    <div className="min-w-0 text-xs">
-                      <div className="flex items-center gap-1 font-semibold text-emerald-700">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Receipt photo attached</span>
-                      </div>
-                      <p className="text-[11px] text-stone-500 truncate">
-                        Tap preview to view full image
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-stone-900 truncate">
+                        Receipt Photo Attached
+                      </p>
+                      <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Ready for audit claim</span>
                       </p>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleClearReceipt}
-                    title="Remove receipt photo (make entry receipt-free)"
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 transition shrink-0 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Remove</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAIExtractFromReceipt()}
+                      disabled={isExtractingAI}
+                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-lg bg-orange-100 text-orange-900 hover:bg-orange-200 font-semibold text-xs transition cursor-pointer"
+                      title="Auto-fill form fields using free Gemini AI scan"
+                    >
+                      {isExtractingAI ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin text-orange-700" />
+                          <span>Scanning...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3 h-3 text-orange-700" />
+                          <span>AI Auto-Fill</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleClearReceipt}
+                      className="p-1.5 rounded-lg text-stone-400 hover:text-red-700 hover:bg-stone-200 transition cursor-pointer"
+                      title="Remove receipt"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* AI Extraction Button */}
-                <div className="pt-2 border-t border-stone-200 flex flex-wrap items-center justify-between gap-2">
+                {/* Sub-actions under attached receipt */}
+                <div className="flex items-center justify-between pt-2 border-t border-stone-200/60">
                   <button
                     type="button"
-                    disabled={isExtractingAI}
-                    onClick={() => handleAIExtractFromReceipt(receiptImage)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-orange-600 to-amber-600 hover:brightness-105 transition shadow-xs cursor-pointer disabled:opacity-50"
+                    onClick={() =>
+                      setPreviewReceiptModal({
+                        image: receiptImage,
+                        title: vendorName || 'Receipt Photo',
+                        invoiceNumber,
+                        date: purchaseDate,
+                        amount: totalAmount,
+                      })
+                    }
+                    className="text-[11px] font-semibold text-orange-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
                   >
-                    {isExtractingAI ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>AI Scanning Receipt...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                        <span>Auto-Fill Details with AI</span>
-                      </>
-                    )}
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Enlarge Receipt Photo</span>
                   </button>
 
                   <div className="flex items-center gap-1.5 text-xs">
@@ -1863,38 +1866,27 @@ const generateUniqueInvoiceNumber = (
                     type="button"
                     onClick={() => galleryInputRef.current?.click()}
                     disabled={isProcessingImage}
-                    className="flex items-center justify-center sm:justify-start gap-2.5 p-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 hover:border-stone-400 text-stone-800 transition text-left cursor-pointer active:scale-[0.99]"
+                    className="flex items-center justify-center sm:justify-start gap-2.5 p-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-orange-50/50 hover:border-orange-300 text-stone-800 transition text-left cursor-pointer active:scale-[0.99]"
                   >
                     <div className="w-9 h-9 rounded-lg bg-stone-200 text-stone-700 flex items-center justify-center shrink-0">
                       <ImageIcon className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-stone-900 flex items-center gap-1">
-                        <span>Choose Gallery</span>
-                        <span className="text-[10px] text-stone-500 font-medium">(Photos)</span>
+                        <span>Choose Photo</span>
+                        <span className="text-[10px] text-stone-500 font-medium">(Gallery)</span>
                       </div>
                       <div className="text-[11px] text-stone-500">
-                        Pick from saved images
+                        Select from photos or files
                       </div>
                     </div>
                   </button>
                 </div>
 
-                {/* Direct AI Scan Prompt */}
-                <button
-                  type="button"
-                  onClick={() => scanOnlyInputRef.current?.click()}
-                  disabled={isProcessingImage || isExtractingAI}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 border border-orange-200 hover:border-orange-300 text-orange-950 text-xs font-semibold transition cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4 text-orange-700 shrink-0" />
-                  <span>Snap &amp; Auto-Extract All Details with Gemini AI</span>
-                </button>
-
                 {isProcessingImage && (
                   <div className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-medium border border-amber-200">
                     <Loader2 className="w-4 h-4 animate-spin text-orange-700 shrink-0" />
-                    <span>Compressing & preparing receipt photo...</span>
+                    <span>Compressing &amp; preparing receipt photo...</span>
                   </div>
                 )}
               </div>
@@ -1963,35 +1955,41 @@ const generateUniqueInvoiceNumber = (
         </form>
       </Modal>
 
-      {/* Attached Receipt Image Full Viewer Modal */}
+      {/* Enlarged Receipt Photo Viewer Modal */}
       {previewReceiptModal && (
         <Modal
-          isOpen={!!previewReceiptModal}
+          isOpen={true}
           onClose={() => setPreviewReceiptModal(null)}
-          title="Attached Tax Receipt / Invoice"
-          subtitle={`${previewReceiptModal.title} (${previewReceiptModal.invoiceNumber}) · ${previewReceiptModal.date} · ${formatCurrency(previewReceiptModal.amount, settings.currencySymbol)}`}
-          maxWidth="max-w-2xl"
+          title={`Receipt Photo — ${previewReceiptModal.title}`}
+          subtitle={`Invoice #${previewReceiptModal.invoiceNumber} · ${formatDate(previewReceiptModal.date)} · ${formatCurrency(previewReceiptModal.amount, settings.currencySymbol)}`}
         >
           <div className="space-y-4">
-            <div className="max-h-[65vh] overflow-auto rounded-xl border border-stone-300 bg-stone-100 flex items-center justify-center p-2">
+            <div className="max-h-[68vh] overflow-auto rounded-xl bg-stone-900 flex items-center justify-center p-2 border border-stone-700 shadow-inner">
               <img
                 src={previewReceiptModal.image}
-                alt="Full receipt"
-                referrerPolicy="no-referrer"
-                className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-sm"
+                alt={`Receipt for ${previewReceiptModal.title}`}
+                className="max-h-[64vh] w-auto max-w-full object-contain rounded-lg"
               />
             </div>
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-stone-200">
-              <span className="text-xs text-stone-500 text-center sm:text-left">
-                Attached invoice proof for tax deductibility & VAT compliance
-              </span>
-              <button
-                type="button"
-                onClick={() => setPreviewReceiptModal(null)}
-                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-semibold hover:bg-stone-800 transition cursor-pointer"
-              >
-                Close Viewer
-              </button>
+            <div className="flex items-center justify-between text-xs text-stone-600">
+              <span className="font-medium">Stored in local offline storage</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewReceiptModal.image}
+                  download={`Receipt-${previewReceiptModal.invoiceNumber}-${previewReceiptModal.date}.jpg`}
+                  className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 font-semibold inline-flex items-center gap-1.5 transition"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Download Image</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewReceiptModal(null)}
+                  className="px-3 py-1.5 rounded-lg bg-stone-800 text-white font-semibold hover:bg-black transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </Modal>
