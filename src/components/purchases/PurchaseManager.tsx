@@ -265,7 +265,7 @@ const generateUniqueInvoiceNumber = (
   const openNewPurchaseModal = () => {
     setEditingPurchase(null);
     setInvoiceType('manual');
-    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M-'));
+    setInvoiceNumber(generateUniqueInvoiceNumber(purchases, 'M'));
     setInvoiceError(null);
     setPurchaseDate(today);
     setVendorName('');
