@@ -3,6 +3,7 @@
   "appId": "1:522176907202:web:35c1ec24a7d6dd65bb785b",
   "apiKey": "AIzaSyCVBBsy5LUNtVB70yodu3bV3kL1zNHNuJ8",
   "authDomain": "gen-lang-client-0788885307.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-taxguardsalespur-0ddd81be-9988-4a23-b218-5cfb5bc29c03",
   "storageBucket": "gen-lang-client-0788885307.firebasestorage.app",
   "messagingSenderId": "522176907202",
   "measurementId": "",

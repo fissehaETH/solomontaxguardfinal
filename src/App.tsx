@@ -1,24 +1,21 @@
 import React, { useState, useEffect } from 'react';
 
-// Local stubs replacing Firestore database operations
-const db = {} as unknown;
-const doc = (..._args: unknown[]) => ({});
-const setDoc = async (..._args: unknown[]) => {};
-const updateDoc = async (..._args: unknown[]) => {};
-const deleteDoc = async (..._args: unknown[]) => {};
-const writeBatch = (..._args: unknown[]) => ({
-  set: (..._args: unknown[]) => {},
-  update: (..._args: unknown[]) => {},
-  delete: (..._args: unknown[]) => {},
-  commit: async () => {},
-});
-const serverTimestamp = () => Date.now();
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  WRITE = 'write',
-}
+import {
+  auth,
+  db,
+  doc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  serverTimestamp,
+  signInWithGoogle,
+  firebaseSignOut,
+  onAuthStateChanged,
+  handleFirestoreError,
+  OperationType,
+  User,
+} from './firebase';
 import {
   BankAccount,
   BankReconciliationStatement,
@@ -77,21 +74,74 @@ function sanitizeId(raw: string): string {
 }
 
 export default function App() {
-  // Single-User Authentication State
+  // Firebase Authentication State & Local Fallback
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(() => auth.currentUser);
+  const [isSigningInWithGoogle, setIsSigningInWithGoogle] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (auth.currentUser) return true;
     try {
       return localStorage.getItem('taxguard_logged_in') === 'true';
     } catch {
-      return true;
+      return false;
     }
   });
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const authUsername = localStorage.getItem('taxguard_username') || 'solomon';
-  const user = { uid: authUsername, email: `${authUsername}@local`, displayName: authUsername };
+  // Synchronize Firebase Auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (usr) => {
+      setFirebaseUser(usr);
+      if (usr) {
+        setIsLoggedIn(true);
+        try {
+          localStorage.setItem('taxguard_logged_in', 'true');
+          localStorage.setItem('taxguard_username', usr.email || usr.uid);
+        } catch {}
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const authUsername = firebaseUser?.uid || localStorage.getItem('taxguard_username') || 'solomon';
+  const user = firebaseUser
+    ? { uid: firebaseUser.uid, email: firebaseUser.email, displayName: firebaseUser.displayName || firebaseUser.email }
+    : { uid: authUsername, email: `${authUsername}@local`, displayName: authUsername };
   const [hasSettingsDoc, setHasSettingsDoc] = useState(true);
+
+  const handleGoogleSignIn = async () => {
+    setLoginError(null);
+    setIsSigningInWithGoogle(true);
+    try {
+      const usr = await signInWithGoogle();
+      if (usr) {
+        setIsLoggedIn(true);
+        setFirebaseUser(usr);
+        try {
+          localStorage.setItem('taxguard_logged_in', 'true');
+          localStorage.setItem('taxguard_username', usr.email || usr.uid);
+        } catch {}
+        showToast(`Signed in with Google as ${usr.displayName || usr.email}!`);
+        // Hydrate from Firestore
+        performFirstTimeCloudSync(usr.uid, (data) => {
+          if (data.sales && data.sales.length > 0) setSales(data.sales);
+          if (data.purchases && data.purchases.length > 0) setPurchases(data.purchases);
+          if (data.bankAccounts && data.bankAccounts.length > 0) setBankAccounts(data.bankAccounts);
+          if (data.bankTransactions && data.bankTransactions.length > 0) setBankTransactions(data.bankTransactions);
+          if (data.dailyCloses && data.dailyCloses.length > 0) setDailyCloses(data.dailyCloses);
+          if (data.reconcilingItems && data.reconcilingItems.length > 0) setReconcilingItems(data.reconcilingItems);
+          if (data.brsStatements && data.brsStatements.length > 0) setBrsStatements(data.brsStatements);
+          if (data.settings) setSettings(data.settings);
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setLoginError(msg || 'Google sign-in was blocked or failed.');
+    } finally {
+      setIsSigningInWithGoogle(false);
+    }
+  };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +160,12 @@ export default function App() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch {}
     setIsLoggedIn(false);
+    setFirebaseUser(null);
     try {
       localStorage.setItem('taxguard_logged_in', 'false');
     } catch {}
@@ -465,20 +519,35 @@ export default function App() {
   };
 
 
-  // Action completion helper (local storage is primary, Firestore database removed)
+  // Online Firestore database write with fallback and error handling
   const safeWrite = async (
-    _action?: () => Promise<void>,
-    _op?: OperationType,
-    _path?: string,
+    action?: () => Promise<void>,
+    op?: OperationType,
+    path?: string,
     syncMutationId?: string,
     uid?: string | null
   ) => {
-    if (syncMutationId) {
+    if (action && auth.currentUser) {
+      try {
+        await action();
+        if (syncMutationId) {
+          removeSyncMutation(syncMutationId, uid);
+        }
+        setPendingSyncCount(getPendingSyncMutations(uid).length);
+        setIsQuotaExceeded(false);
+        setQuotaExceededFlag(false);
+      } catch (err: unknown) {
+        console.warn(`Firestore ${op || 'write'} warning on ${path || 'unknown'}:`, err);
+        try {
+          handleFirestoreError(err, op || OperationType.WRITE, path || null);
+        } catch (e) {
+          console.error('Handled Firestore safeWrite error:', e);
+        }
+      }
+    } else if (syncMutationId) {
       removeSyncMutation(syncMutationId, uid);
+      setPendingSyncCount(getPendingSyncMutations(uid).length);
     }
-    setPendingSyncCount(0);
-    setIsQuotaExceeded(false);
-    setQuotaExceededFlag(false);
   };
 
   // Firestore & Phone Local Storage Action Handlers
@@ -3138,7 +3207,7 @@ export default function App() {
               Solomon Building Materials Shop
             </h1>
             <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
-              Log in with your username and password to access your local ledger and tax records.
+              Sign in with your Google account to synchronize your ledger with Cloud Firestore, or use local shop credentials.
             </p>
           </div>
 
@@ -3147,6 +3216,44 @@ export default function App() {
               {loginError}
             </div>
           )}
+
+          {/* Primary Action: Google Sign-In */}
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={isSigningInWithGoogle}
+              className="w-full py-3 px-4 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 hover:bg-stone-50 dark:hover:bg-stone-750 text-stone-800 dark:text-stone-100 text-sm font-semibold transition-all flex items-center justify-center gap-3 cursor-pointer shadow-sm hover:shadow active:scale-[0.99] disabled:opacity-50"
+            >
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                />
+              </svg>
+              <span>{isSigningInWithGoogle ? 'Connecting to Google...' : 'Sign In with Google'}</span>
+            </button>
+
+            <div className="relative flex py-1 items-center">
+              <div className="grow border-t border-stone-200 dark:border-stone-800"></div>
+              <span className="shrink mx-3 text-[10px] font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+                Or sign in with shop credentials
+              </span>
+              <div className="grow border-t border-stone-200 dark:border-stone-800"></div>
+            </div>
+          </div>
 
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div className="space-y-1">
@@ -3182,7 +3289,7 @@ export default function App() {
           </form>
 
           <div className="pt-3 border-t border-stone-100 dark:border-stone-800 text-[11px] text-stone-500 dark:text-stone-400 text-center">
-            Default Login: <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon</code> / <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon123</code>
+            Default Offline Account: <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon</code> / <code className="font-mono bg-stone-100 dark:bg-stone-800 px-1 py-0.5 rounded">solomon123</code>
           </div>
         </div>
 
@@ -3241,8 +3348,8 @@ export default function App() {
         setActiveTab('purchases');
         setIsAddPurchaseOpen(true);
       }}
-      userEmail={`${authUsername} (Single User)`}
-      userName={authUsername}
+      userEmail={user.email || `${authUsername} (Single User)`}
+      userName={user.displayName || authUsername}
       onSignOut={handleSignOut}
       unreconciledBankCount={unreconciledBankCount}
       auditIssuesCount={auditReport.issues.length}
@@ -3423,7 +3530,7 @@ export default function App() {
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
         uid={authUsername}
-        userEmail={`${authUsername} (Single User)`}
+        userEmail={user.email || `${authUsername} (Single User)`}
         onDataRestored={handleReloadFromLocalStorage}
         onPullFromCloud={handleRefreshFromCloud}
       />
