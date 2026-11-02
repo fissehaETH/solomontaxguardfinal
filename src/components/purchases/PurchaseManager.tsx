@@ -273,7 +273,16 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
   const handleToggleInvoiceType = (type: 'manual' | 'fiscal') => {
     setInvoiceType(type);
-    setInvoiceNumber('');
+    if (!editingPurchase) {
+      setInvoiceNumber('');
+    } else {
+      // While editing, preserve the invoice number and swap prefix if needed
+      if (type === 'manual' && invoiceNumber.toUpperCase().startsWith('FS')) {
+        setInvoiceNumber('M' + invoiceNumber.substring(2).replace(/^[-_\s]+/, ''));
+      } else if (type === 'fiscal' && invoiceNumber.toUpperCase().startsWith('M')) {
+        setInvoiceNumber('FS' + invoiceNumber.substring(1).replace(/^[-_\s]+/, ''));
+      }
+    }
     if (invoiceError) setInvoiceError(null);
   };
 
@@ -472,6 +481,9 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
       setInvoiceError('Invoice number / receipt number is required.');
       return;
     }
+
+    // Strip any hyphens or spaces immediately following M or FS (e.g. M-1234 -> M1234, FS-5678 -> FS5678)
+    cleanInvoice = cleanInvoice.replace(/^(M|FS)[-_\s]+/i, '$1');
 
     // When registering manual invoices, ensure invoice number starts with M
     if (invoiceType === 'manual' && !cleanInvoice.toUpperCase().startsWith('M')) {
@@ -1270,14 +1282,15 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
                   required
                   value={invoiceNumber}
                   onFocus={() => {
-                    // When user tries to enter invoice number, clear the field so they can enter immediately
-                    if (invoiceNumber) {
-                      setInvoiceNumber('');
-                    }
                     if (invoiceError) setInvoiceError(null);
+                    // When editing an existing purchase, NEVER delete any entries - preserve all edited data
+                    if (editingPurchase) return;
                   }}
                   onChange={(e) => {
-                    setInvoiceNumber(e.target.value);
+                    let val = e.target.value;
+                    // Automatically prevent/remove hyphens right after M or FS (e.g. M- -> M, FS- -> FS)
+                    val = val.replace(/^(M|FS)[-_\s]+/i, '$1');
+                    setInvoiceNumber(val);
                     if (invoiceError) setInvoiceError(null);
                   }}
                   placeholder={invoiceType === 'manual' ? 'e.g. M00048291' : 'e.g. FS00048291'}

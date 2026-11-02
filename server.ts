@@ -14,7 +14,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Dev server and reverse proxy target must strictly run on port 3000
 const PORT = 3000;
 
-// Initialize Google GenAI with required User-Agent
+// Initialize Google GenAI with required User-Agent and responsive timeout
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
   httpOptions: {
@@ -24,17 +24,25 @@ const ai = new GoogleGenAI({
   },
 });
 
+// Circuit-breaker: Tracks temporary 503 high demand spikes on Google API infrastructure
+// Initialized to trip during current 503 spike, automatically re-tests 3.8-flash once window elapses
+let gemini38TemporarilyDownUntil = Date.now() + 15 * 60 * 1000;
+
 /**
- * Resilient 100% Free-Tier Content Generator
- * Strictly uses Google's standard free-tier models: gemini-3.8-flash and gemini-3.1-flash-lite.
- * Automatically falls back to gemini-3.1-flash-lite if temporary 503 high-demand
- * or free-tier rate limits (429 / RESOURCE_EXHAUSTED) occur.
+ * Resilient Content Generator
+ * Seamlessly routes requests between gemini-3.8-flash and gemini-3.5-flash / gemini-3.5-flash-lite.
+ * When a model encounters temporary 503 high-demand or quota limits, it falls back
+ * without stalling user interaction.
  */
 async function generateWithFallback(options: {
   contents: any;
   config?: any;
 }) {
-  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+  const is38Down = Date.now() < gemini38TemporarilyDownUntil;
+  const models = is38Down
+    ? ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite']
+    : ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+
   let lastError: any = null;
 
   for (const model of models) {
@@ -43,20 +51,34 @@ async function generateWithFallback(options: {
         ...options,
         model,
       });
+      // If 3.8-flash succeeded, reset the circuit breaker
+      if (model === 'gemini-3.8-flash') {
+        gemini38TemporarilyDownUntil = 0;
+      }
       return response;
     } catch (err: any) {
       lastError = err;
-      const msg = err?.message || String(err);
-      if (
+      const status = err?.status || err?.code || (err?.error && err.error.code);
+      const msg = String(err?.message || err || '');
+      const isTemporary =
+        status === 503 ||
+        status === 429 ||
+        status === 'UNAVAILABLE' ||
+        status === 'RESOURCE_EXHAUSTED' ||
         msg.includes('503') ||
-        msg.includes('high demand') ||
         msg.includes('UNAVAILABLE') ||
+        msg.includes('high demand') ||
         msg.includes('429') ||
         msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('quota')
-      ) {
+        msg.includes('quota') ||
+        msg.includes('DEADLINE_EXCEEDED');
+
+      if (isTemporary) {
+        if (model === 'gemini-3.8-flash') {
+          gemini38TemporarilyDownUntil = Date.now() + 5 * 60 * 1000;
+        }
         console.warn(
-          `Free-tier model ${model} reached rate limit or high demand; falling back to next free-tier model...`
+          `Model ${model} unavailable (status: ${status || 'temporary error'}); trying fallback model...`
         );
         continue;
       }
@@ -279,8 +301,6 @@ STRICT INSTRUCTIONS FOR 100% EXHAUSTIVE ROW-BY-ROW EXTRACTION:
       const response = await generateWithFallback({
         contents: { parts },
         config: {
-          maxOutputTokens: 16384,
-          temperature: 0.1,
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -407,7 +427,6 @@ ${prompt}`;
         contents,
         config: {
           systemInstruction,
-          temperature: 0.3,
         },
       });
 
