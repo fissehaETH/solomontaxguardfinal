@@ -2,8 +2,57 @@
 <html lang="en">
   <head>
     <script>
-      // Gracefully silence expected HMR WebSocket disconnection notifications in cloud iframe environment
+      // Gracefully silence expected HMR WebSocket errors in cloud iframe environment
       (function() {
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          var NativeWebSocket = window.WebSocket;
+          function MockViteWebSocket(url, protocols) {
+            var urlStr = String(url || '');
+            var isViteHmr =
+              urlStr.indexOf('vite-hmr') !== -1 ||
+              protocols === 'vite-hmr' ||
+              urlStr.indexOf('/@vite/') !== -1 ||
+              (Array.isArray(protocols) && protocols.indexOf('vite-hmr') !== -1);
+
+            if (isViteHmr) {
+              var target = {
+                url: urlStr,
+                readyState: 1, // OPEN
+                bufferedAmount: 0,
+                extensions: '',
+                protocol: 'vite-hmr',
+                binaryType: 'blob',
+                send: function() {},
+                close: function() {},
+                addEventListener: function(event, handler) {
+                  if (event === 'open') {
+                    setTimeout(function() {
+                      try { if (typeof handler === 'function') handler({ type: 'open' }); } catch(e) {}
+                    }, 0);
+                  }
+                },
+                removeEventListener: function() {},
+                dispatchEvent: function() { return true; },
+                onopen: null,
+                onclose: null,
+                onerror: null,
+                onmessage: null
+              };
+              setTimeout(function() {
+                try { if (typeof target.onopen === 'function') target.onopen({ type: 'open' }); } catch(e) {}
+              }, 0);
+              return target;
+            }
+            return new NativeWebSocket(url, protocols);
+          }
+          MockViteWebSocket.prototype = NativeWebSocket.prototype;
+          MockViteWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+          MockViteWebSocket.OPEN = NativeWebSocket.OPEN;
+          MockViteWebSocket.CLOSING = NativeWebSocket.CLOSING;
+          MockViteWebSocket.CLOSED = NativeWebSocket.CLOSED;
+          window.WebSocket = MockViteWebSocket;
+        }
+
         var originalConsoleError = console.error;
         console.error = function() {
           var args = Array.prototype.slice.call(arguments);
