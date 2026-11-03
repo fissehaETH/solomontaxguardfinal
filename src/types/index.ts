@@ -10,6 +10,8 @@ export type ExpenseCategory =
   | 'logistics_transport'
   | 'professional_fees'
   | 'meals_entertainment'
+  | 'Stationary'
+  | 'stationary'
   | 'other_operational';
 
 export type TaxDeductibility = 'fully_deductible' | 'partially_deductible' | 'non_deductible';

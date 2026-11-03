@@ -113,6 +113,16 @@ export const CATEGORY_LABELS: Record<ExpenseCategory, { label: string; deductibl
     deductibleNote: '50% Deductible limit by statutory rule',
     color: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
   },
+  Stationary: {
+    label: 'Stationary Equipments',
+    deductibleNote: '100% Tax Deductible (Office Supplies)',
+    color: 'bg-lime-500/15 text-lime-400 border-lime-500/30',
+  },
+  stationary: {
+    label: 'Stationary Equipments',
+    deductibleNote: '100% Tax Deductible (Office Supplies)',
+    color: 'bg-lime-500/15 text-lime-400 border-lime-500/30',
+  },
   other_operational: {
     label: 'Miscellaneous Operational',
     deductibleNote: 'Auditor verification required',

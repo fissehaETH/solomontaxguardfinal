@@ -464,7 +464,7 @@ export const ScanBankStatementModal: React.FC<ScanBankStatementModalProps> = ({
 
       // Select all transactions by default
       const initialSelected: Record<number, boolean> = {};
-      (result.transactions || []).forEach((_, idx) => {
+      (result.transactions || []).forEach((_: unknown, idx: number) => {
         initialSelected[idx] = true;
       });
       setSelectedIndices(initialSelected);

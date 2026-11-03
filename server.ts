@@ -91,6 +91,17 @@ async function generateWithFallback(options: {
 async function startServer() {
   const app = express();
 
+  // Enable CORS for external domains and workers
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-gemini-api-key');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
   // Allow up to 50MB for multi-page base64 statements, receipts & documents
   app.use(express.json({ limit: '50mb' }));
 
