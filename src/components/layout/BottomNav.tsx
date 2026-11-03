@@ -54,7 +54,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     },
     {
       id: 'purchases',
-      label: 'Purchases',
+      label: 'Expenses',
       amharic: 'ግዢ',
       icon: Receipt,
     },

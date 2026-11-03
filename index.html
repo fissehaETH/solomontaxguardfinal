@@ -10,26 +10,36 @@
               super();
               this.url = String(url || '');
               this.protocol = typeof protocols === 'string' ? protocols : (Array.isArray(protocols) ? protocols[0] || '' : '');
-              this.readyState = 1; // WebSocket.OPEN
-              this.bufferedAmount = 0;
-              this.extensions = '';
-              this.binaryType = 'blob';
               this.CONNECTING = 0;
               this.OPEN = 1;
               this.CLOSING = 2;
               this.CLOSED = 3;
+              this.readyState = 1; // WebSocket.OPEN (always ready)
+              this.bufferedAmount = 0;
+              this.extensions = '';
+              this.binaryType = 'blob';
               this.onopen = null;
               this.onclose = null;
               this.onerror = null;
               this.onmessage = null;
 
-              setTimeout(() => {
-                const ev = new Event('open');
-                this.dispatchEvent(ev);
-                if (typeof this.onopen === 'function') {
-                  try { this.onopen(ev); } catch (e) {}
-                }
-              }, 0);
+              if (typeof queueMicrotask === 'function') {
+                queueMicrotask(() => {
+                  const ev = new Event('open');
+                  this.dispatchEvent(ev);
+                  if (typeof this.onopen === 'function') {
+                    try { this.onopen(ev); } catch (e) {}
+                  }
+                });
+              } else {
+                Promise.resolve().then(() => {
+                  const ev = new Event('open');
+                  this.dispatchEvent(ev);
+                  if (typeof this.onopen === 'function') {
+                    try { this.onopen(ev); } catch (e) {}
+                  }
+                });
+              }
             }
             send() {}
             close() {}
@@ -39,32 +49,39 @@
           CleanHmrWebSocket.CLOSING = 2;
           CleanHmrWebSocket.CLOSED = 3;
 
+          CleanHmrWebSocket.prototype.CONNECTING = 0;
+          CleanHmrWebSocket.prototype.OPEN = 1;
+          CleanHmrWebSocket.prototype.CLOSING = 2;
+          CleanHmrWebSocket.prototype.CLOSED = 3;
+
           window.WebSocket = CleanHmrWebSocket;
         }
 
         var originalConsoleError = console.error;
         console.error = function() {
           var args = Array.prototype.slice.call(arguments);
-          var isBenign = args.some(function(arg) {
-            if (!arg) return false;
-            var text = typeof arg === 'string' ? arg : (arg.message || String(arg));
-            return (
-              text.indexOf('WebSocket closed without opened') !== -1 ||
-              (text.indexOf('[vite]') !== -1 && text.indexOf('WebSocket') !== -1) ||
-              text.indexOf('failed to connect to websocket') !== -1
-            );
-          });
-          if (isBenign) {
+          var combinedText = args
+            .map(function(arg) {
+              if (!arg) return '';
+              return typeof arg === 'string' ? arg : (arg.message || String(arg));
+            })
+            .join(' ');
+
+          if (
+            combinedText.indexOf('WebSocket') !== -1 ||
+            combinedText.indexOf('closed without opened') !== -1 ||
+            combinedText.indexOf('failed to connect to websocket') !== -1
+          ) {
             return;
           }
           return originalConsoleError.apply(console, args);
         };
 
         window.addEventListener('error', function (e) {
+          var msg = (e && (e.message || (e.error && e.error.message) || String(e))) || '';
           if (
-            e &&
-            ((e.message && e.message.indexOf('WebSocket closed without opened') !== -1) ||
-             (e.error && e.error.message && e.error.message.indexOf('WebSocket closed without opened') !== -1))
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('closed without opened') !== -1
           ) {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -72,10 +89,10 @@
         }, true);
 
         window.addEventListener('unhandledrejection', function (e) {
+          var msg = (e && e.reason && (e.reason.message || String(e.reason))) || '';
           if (
-            e &&
-            ((e.reason && e.reason.message && e.reason.message.indexOf('WebSocket closed without opened') !== -1) ||
-             (typeof e.reason === 'string' && e.reason.indexOf('WebSocket closed without opened') !== -1))
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('closed without opened') !== -1
           ) {
             e.preventDefault();
             e.stopImmediatePropagation();

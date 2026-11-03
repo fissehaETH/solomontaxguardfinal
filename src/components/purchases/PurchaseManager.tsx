@@ -54,7 +54,7 @@ export const EXPENSE_CATEGORIES: { id: ExpenseCategory; label: string }[] = [
   { id: 'equipment_repairs', label: 'Equipment, Hardware & Repairs' },
   { id: 'logistics_transport', label: 'Transport, Delivery & Fuel' },
   { id: 'professional_fees', label: 'Legal, Accounting & Professional Fees' },
-  { id: 'meals_entertainment', label: 'Business Meals & Entertainment (50% Limited)' },
+  { id: 'Stationary', label: 'Stationary Equipments' },
   { id: 'other_operational', label: 'Other Operational Expenses' },
 ];
 
@@ -619,7 +619,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
             className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-orange-700 text-white text-xs font-semibold hover:bg-orange-800 transition whitespace-nowrap min-h-[40px]"
           >
             <Plus className="w-4 h-4 shrink-0" />
-            <span>Log Purchase</span>
+            <span>Log Expenses</span>
           </button>
         </div>
       </div>
