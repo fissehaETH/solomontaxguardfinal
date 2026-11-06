@@ -366,7 +366,7 @@ export const PurchaseManager: React.FC<PurchaseManagerProps> = ({
 
   // Always sorted strictly by date: recent to old
   const sortedPurchases = [...filteredPurchases].sort(
-    (a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)
+    (a, b) => b.date.localeCompare(a.date) || (new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   );
 
   // KPI Calculations

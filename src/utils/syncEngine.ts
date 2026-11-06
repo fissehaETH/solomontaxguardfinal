@@ -29,7 +29,6 @@ import {
   getDoc,
   handleFirestoreError,
   OperationType,
-  serverTimestamp,
 } from '../firebase';
 
 export interface SyncResult {
@@ -42,6 +41,7 @@ export interface SyncResult {
 
 /**
  * Synchronizes pending offline mutations to Cloud Firestore.
+ * Preserves original client runtime timestamps without serverTimestamp() recalibration.
  */
 export async function syncPendingToFirestore(uid?: string | null): Promise<SyncResult> {
   const activeUid = uid || 'local';
@@ -63,14 +63,21 @@ export async function syncPendingToFirestore(uid?: string | null): Promise<SyncR
       const docRef = doc(db, item.collection, item.docId);
 
       if (item.operation === 'set' && item.data) {
+        // Immutable date constraint: Preserve exact client runtime ISO timestamp
+        const clientCreatedAt = item.data.createdAt || new Date().toISOString();
+        const clientUpdatedAt = item.data.updatedAt || new Date().toISOString();
         await setDoc(docRef, {
           ...item.data,
-          updatedAt: serverTimestamp(),
+          createdAt: clientCreatedAt,
+          updatedAt: clientUpdatedAt,
         });
       } else if (item.operation === 'update' && item.data) {
+        // Date immutability: Never overwrite or recalibrate original createdAt
+        const { createdAt: _ignoredCreatedAt, ...updateFields } = item.data;
+        const clientUpdatedAt = item.data.updatedAt || new Date().toISOString();
         await updateDoc(docRef, {
-          ...item.data,
-          updatedAt: serverTimestamp(),
+          ...updateFields,
+          updatedAt: clientUpdatedAt,
         });
       } else if (item.operation === 'delete') {
         await deleteDoc(docRef);

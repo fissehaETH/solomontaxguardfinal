@@ -8,7 +8,6 @@ import {
   updateDoc,
   deleteDoc,
   writeBatch,
-  serverTimestamp,
   signInWithGoogle,
   firebaseSignOut,
   onAuthStateChanged,
@@ -16,6 +15,7 @@ import {
   OperationType,
   User,
 } from './firebase';
+import { ensureIsoTimestamp } from './utils/dataMappers';
 import {
   BankAccount,
   BankReconciliationStatement,
@@ -72,6 +72,8 @@ function sanitizeId(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
   return cleaned || `id-${Date.now()}`;
 }
+
+const clientTimestamp = () => new Date().toISOString();
 
 export default function App() {
   // Firebase Authentication State & Local Fallback
@@ -572,6 +574,7 @@ export default function App() {
     const paymentMethod =
       transferAmount > 0 && cashAmount === 0 ? 'bank_transfer' : 'cash';
 
+    const itemCreatedAt = newSale.createdAt ? ensureIsoTimestamp(newSale.createdAt) : clientTimestamp();
     const localItem: SaleTransaction = {
       ...newSale,
       id: saleId,
@@ -579,7 +582,7 @@ export default function App() {
       cashAmount,
       bankTransferAmount: transferAmount,
       paymentMethod,
-      createdAt: newSale.createdAt || Date.now(),
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React State
@@ -608,8 +611,8 @@ export default function App() {
       paymentMethod,
       isReconciledWithBank: Boolean(newSale.isReconciledWithBank),
       notes: (newSale.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
     if (transferAmount > 0 && newSale.bankAccountId) {
       salePayload.bankAccountId = sanitizeId(newSale.bankAccountId);
@@ -687,8 +690,8 @@ export default function App() {
           data: {
             ...saleBankTx,
             ownerId: user?.uid || 'guest',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+            createdAt: clientTimestamp(),
+            updatedAt: clientTimestamp(),
           },
           timestamp: Date.now(),
         });
@@ -704,7 +707,7 @@ export default function App() {
           if (targetAcc) {
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
               currentBalance: targetAcc.currentBalance + transferAmount,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
             const txId = sanitizeId(`btx-sale-${saleId}`);
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -719,8 +722,8 @@ export default function App() {
               referenceId: saleId,
               isReconciled: true,
               notes: `Auto-reconciled with Daily Sales ${newSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
+              createdAt: clientTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -761,6 +764,7 @@ export default function App() {
     const paymentMethod =
       transferAmount > 0 && cashAmount === 0 ? 'bank_transfer' : 'cash';
 
+    const itemCreatedAt = oldSale?.createdAt ? ensureIsoTimestamp(oldSale.createdAt) : (updatedSale.createdAt ? ensureIsoTimestamp(updatedSale.createdAt) : clientTimestamp());
     const localItem: SaleTransaction = {
       ...updatedSale,
       id: saleId,
@@ -768,6 +772,7 @@ export default function App() {
       cashAmount,
       bankTransferAmount: transferAmount,
       paymentMethod,
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React state update
@@ -798,7 +803,7 @@ export default function App() {
           : '',
       isReconciledWithBank: Boolean(updatedSale.isReconciledWithBank),
       notes: (updatedSale.notes || '').slice(0, 1000),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -861,8 +866,8 @@ export default function App() {
         data: {
           ...saleBankTx,
           ownerId: user?.uid || 'guest',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         },
         timestamp: Date.now(),
       });
@@ -894,7 +899,7 @@ export default function App() {
           if (oldAcc && oldBankId !== newBankId) {
             await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
               currentBalance: oldAcc.currentBalance - oldTransfer,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -906,7 +911,7 @@ export default function App() {
             if (delta !== 0) {
               await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
                 currentBalance: targetAcc.currentBalance + delta,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
           }
@@ -922,7 +927,7 @@ export default function App() {
               description: `Daily Bank Transfer Sales (${updatedSale.date}) — Ref ${updatedSale.receiptNumber}`.slice(0, 500),
               amount: transferAmount,
               notes: `Auto-reconciled with Daily Sales ${updatedSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           } else {
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -937,8 +942,8 @@ export default function App() {
               referenceId: saleId,
               isReconciled: true,
               notes: `Auto-reconciled with Daily Sales ${updatedSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
+              createdAt: clientTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         } else if (existingAutoTx) {
@@ -1009,7 +1014,7 @@ export default function App() {
             if (acc) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
                 currentBalance: acc.currentBalance - oldTransfer,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
           }
@@ -1045,6 +1050,7 @@ export default function App() {
     const paymentMethod: PaymentMethod =
       bankAmount > 0 && cashAmount === 0 ? 'bank_transfer' : 'cash';
 
+    const itemCreatedAt = newPurchase.createdAt ? ensureIsoTimestamp(newPurchase.createdAt) : clientTimestamp();
     const localItem: PurchaseItem = {
       ...newPurchase,
       id: purchaseId,
@@ -1053,7 +1059,7 @@ export default function App() {
       bankAmount,
       paymentMethod,
       bankAccountId: targetBankAccountId,
-      createdAt: newPurchase.createdAt || Date.now(),
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React State
@@ -1086,8 +1092,8 @@ export default function App() {
       paymentMethod,
       isReconciledWithBank: Boolean(newPurchase.isReconciledWithBank),
       notes: (newPurchase.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
 
     if (newPurchase.vendorTin && newPurchase.vendorTin.trim()) {
@@ -1169,8 +1175,8 @@ export default function App() {
         data: {
           ...purBankTx,
           ownerId: user?.uid || 'guest',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         },
         timestamp: Date.now(),
       });
@@ -1185,7 +1191,7 @@ export default function App() {
           if (targetAcc) {
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
               currentBalance: targetAcc.currentBalance - bankAmount,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
             const txId = sanitizeId(`btx-pur-${purchaseId}`);
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -1200,8 +1206,8 @@ export default function App() {
               referenceId: purchaseId,
               isReconciled: true,
               notes: `Tied to verified invoice ${newPurchase.invoiceNumber}`.slice(0, 1000),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
+              createdAt: clientTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -1242,6 +1248,7 @@ export default function App() {
     const paymentMethod: PaymentMethod =
       newBankAmount > 0 && newCashAmount === 0 ? 'bank_transfer' : 'cash';
 
+    const itemCreatedAt = oldPurchase?.createdAt ? ensureIsoTimestamp(oldPurchase.createdAt) : (updatedPurchase.createdAt ? ensureIsoTimestamp(updatedPurchase.createdAt) : clientTimestamp());
     const localItem: PurchaseItem = {
       ...updatedPurchase,
       id: purchaseId,
@@ -1250,6 +1257,7 @@ export default function App() {
       bankAmount: newBankAmount,
       paymentMethod,
       bankAccountId: newBankId || undefined,
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React state update
@@ -1283,7 +1291,7 @@ export default function App() {
       isReconciledWithBank: Boolean(updatedPurchase.isReconciledWithBank),
       receiptImage: (updatedPurchase.receiptImage || '').slice(0, 750000),
       notes: (updatedPurchase.notes || '').slice(0, 1000),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -1349,7 +1357,7 @@ export default function App() {
           if (oldAcc) {
             await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
               currentBalance: oldAcc.currentBalance + oldBankAmount,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -1360,7 +1368,7 @@ export default function App() {
             if (delta !== 0) {
               await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
                 currentBalance: targetAcc.currentBalance - delta,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
           }
@@ -1375,7 +1383,7 @@ export default function App() {
               description: `Supplier Invoice ${updatedPurchase.invoiceNumber}: ${updatedPurchase.vendorName}${newCashAmount > 0 ? ' (Bank Portion)' : ''}`.slice(0, 500),
               amount: newBankAmount,
               notes: `Tied to verified invoice ${updatedPurchase.invoiceNumber}`.slice(0, 1000),
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           } else {
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -1390,8 +1398,8 @@ export default function App() {
               referenceId: purchaseId,
               isReconciled: true,
               notes: `Tied to verified invoice ${updatedPurchase.invoiceNumber}`.slice(0, 1000),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
+              createdAt: clientTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         } else if (existingAutoTx) {
@@ -1456,7 +1464,7 @@ export default function App() {
             if (acc) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
                 currentBalance: acc.currentBalance + oldBankAmount,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
             const txId = sanitizeId(`btx-pur-${oldPurchase.id}`);
@@ -1477,9 +1485,11 @@ export default function App() {
     const existingClose = dailyCloses.find((c) => c.id === close.id || c.date === close.date);
     const closeId = existingClose ? existingClose.id : sanitizeId(close.id);
 
+    const itemCreatedAt = existingClose?.createdAt ? ensureIsoTimestamp(existingClose.createdAt) : (close.createdAt ? ensureIsoTimestamp(close.createdAt) : clientTimestamp());
     const localClose: DailyRegisterClose = {
       ...close,
       id: closeId,
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React State
@@ -1510,8 +1520,8 @@ export default function App() {
       closedBy: (close.closedBy || 'Owner').slice(0, 150),
       status: close.status,
       notes: (close.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -1566,8 +1576,8 @@ export default function App() {
         data: {
           ...depositTx,
           ownerId: user?.uid || 'guest',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         },
         timestamp: Date.now(),
       });
@@ -1607,7 +1617,7 @@ export default function App() {
           if (delta !== 0) {
             await updateDoc(doc(db, 'bankAccounts', primaryAcc.id), {
               currentBalance: primaryAcc.currentBalance + delta,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
           await setDoc(doc(db, 'bankTransactions', txId), {
@@ -1622,8 +1632,8 @@ export default function App() {
             referenceId: closeId,
             isReconciled: true,
             notes: `Reconciled with Z-Report physical cash drawer count for ${close.date}`.slice(0, 1000),
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+            createdAt: clientTimestamp(),
+            updatedAt: clientTimestamp(),
           });
         } else if (oldDeposit > 0 && closeDeposit === 0) {
           await deleteDoc(doc(db, 'bankTransactions', txId)).catch(() => {});
@@ -1698,6 +1708,7 @@ export default function App() {
     const txId = sanitizeId(tx.id);
     const bankAccountId = sanitizeId(tx.bankAccountId);
     const activeUid = user?.uid || 'guest';
+    const itemCreatedAt = tx.createdAt ? ensureIsoTimestamp(tx.createdAt) : clientTimestamp();
 
     const localTx: BankTransaction = {
       ...tx,
@@ -1705,6 +1716,7 @@ export default function App() {
       bankAccountId,
       amount: Number(tx.amount) || 0,
       isReconciled: Boolean(tx.isReconciled),
+      createdAt: itemCreatedAt,
     };
 
     // 1. Optimistic React State
@@ -1727,8 +1739,8 @@ export default function App() {
       category: tx.category.slice(0, 60),
       isReconciled: Boolean(tx.isReconciled),
       notes: (tx.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
     if (tx.referenceId) {
       payload.referenceId = tx.referenceId.slice(0, 128);
@@ -1770,7 +1782,7 @@ export default function App() {
               : targetAcc.currentBalance - tx.amount;
           await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
             currentBalance: nextBalance,
-            updatedAt: serverTimestamp(),
+            updatedAt: clientTimestamp(),
           });
         }
       },
@@ -1873,8 +1885,8 @@ export default function App() {
         category: tx.category.slice(0, 60),
         isReconciled: tx.isReconciled,
         notes: (tx.notes || '').slice(0, 1000),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: clientTimestamp(),
+        updatedAt: clientTimestamp(),
       };
       if (tx.referenceId) {
         payload.referenceId = tx.referenceId.slice(0, 128);
@@ -1912,8 +1924,8 @@ export default function App() {
                 currentBalance: targetAccData.currentBalance,
                 currency: (targetAccData.currency || 'ETB').slice(0, 20),
                 color: (targetAccData.color || '#ea580c').slice(0, 40),
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
+                createdAt: clientTimestamp(),
+                updatedAt: clientTimestamp(),
               },
               { merge: true }
             );
@@ -1938,8 +1950,8 @@ export default function App() {
                 category: tx.category.slice(0, 60),
                 isReconciled: tx.isReconciled,
                 notes: (tx.notes || '').slice(0, 1000),
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
+                createdAt: clientTimestamp(),
+                updatedAt: clientTimestamp(),
               };
               if (tx.referenceId) {
                 txPayload.referenceId = tx.referenceId.slice(0, 128);
@@ -1969,6 +1981,7 @@ export default function App() {
     const oldTx = bankTransactions.find((t) => t.id === txId);
     const newBankId = sanitizeId(updatedTx.bankAccountId);
     const activeUid = user?.uid || 'guest';
+    const itemCreatedAt = oldTx?.createdAt ? ensureIsoTimestamp(oldTx.createdAt) : (updatedTx.createdAt ? ensureIsoTimestamp(updatedTx.createdAt) : clientTimestamp());
 
     const localTx: BankTransaction = {
       ...updatedTx,
@@ -1976,6 +1989,7 @@ export default function App() {
       bankAccountId: newBankId,
       amount: Number(updatedTx.amount) || 0,
       isReconciled: Boolean(updatedTx.isReconciled),
+      createdAt: itemCreatedAt,
     };
 
     const nextTxs = bankTransactions.map((t) => (t.id === txId ? localTx : t));
@@ -1992,7 +2006,7 @@ export default function App() {
       category: updatedTx.category.slice(0, 60),
       isReconciled: Boolean(updatedTx.isReconciled),
       notes: (updatedTx.notes || '').slice(0, 1000),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
     if (updatedTx.referenceId) {
       updatePayload.referenceId = updatedTx.referenceId.slice(0, 128);
@@ -2035,7 +2049,7 @@ export default function App() {
             if (acc && diff !== 0) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
                 currentBalance: acc.currentBalance + diff,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
           } else {
@@ -2044,13 +2058,13 @@ export default function App() {
             if (oldAcc) {
               await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
                 currentBalance: oldAcc.currentBalance - oldSigned,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
             if (newAcc) {
               await updateDoc(doc(db, 'bankAccounts', newAcc.id), {
                 currentBalance: newAcc.currentBalance + newSigned,
-                updatedAt: serverTimestamp(),
+                updatedAt: clientTimestamp(),
               });
             }
           }
@@ -2100,7 +2114,7 @@ export default function App() {
             const signed = oldTx.type === 'credit' ? oldTx.amount : -oldTx.amount;
             await updateDoc(doc(db, 'bankAccounts', acc.id), {
               currentBalance: acc.currentBalance - signed,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -2133,7 +2147,7 @@ export default function App() {
     const updatePayload: Record<string, unknown> = {
       isReconciled: true,
       notes: referenceId ? `Matched to ${referenceId}`.slice(0, 1000) : 'Verified by auditor',
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
     if (referenceId) {
       updatePayload.referenceId = referenceId.slice(0, 128);
@@ -2172,14 +2186,14 @@ export default function App() {
           if (matchedSale) {
             await updateDoc(doc(db, 'sales', matchedSale.id), {
               isReconciledWithBank: true,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
           const matchedPurchase = purchases.find((p) => p.id === referenceId);
           if (matchedPurchase) {
             await updateDoc(doc(db, 'purchases', matchedPurchase.id), {
               isReconciledWithBank: true,
-              updatedAt: serverTimestamp(),
+              updatedAt: clientTimestamp(),
             });
           }
         }
@@ -2257,8 +2271,8 @@ export default function App() {
       data: {
         ...debitTx,
         ownerId: activeUid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: clientTimestamp(),
+        updatedAt: clientTimestamp(),
       },
       timestamp: Date.now(),
     });
@@ -2271,8 +2285,8 @@ export default function App() {
       data: {
         ...creditTx,
         ownerId: activeUid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: clientTimestamp(),
+        updatedAt: clientTimestamp(),
       },
       timestamp: Date.now() + 1,
     });
@@ -2283,11 +2297,11 @@ export default function App() {
       async () => {
         await updateDoc(doc(db, 'bankAccounts', fromAcc.id), {
           currentBalance: fromAcc.currentBalance - amount,
-          updatedAt: serverTimestamp(),
+          updatedAt: clientTimestamp(),
         });
         await updateDoc(doc(db, 'bankAccounts', toAcc.id), {
           currentBalance: toAcc.currentBalance + amount,
-          updatedAt: serverTimestamp(),
+          updatedAt: clientTimestamp(),
         });
         await setDoc(doc(db, 'bankTransactions', debitId), {
           id: debitId,
@@ -2300,8 +2314,8 @@ export default function App() {
           category: 'transfer',
           isReconciled: true,
           notes: note.slice(0, 1000),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         });
         await setDoc(doc(db, 'bankTransactions', creditId), {
           id: creditId,
@@ -2314,8 +2328,8 @@ export default function App() {
           category: 'transfer',
           isReconciled: true,
           notes: note.slice(0, 1000),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         });
       },
       OperationType.CREATE,
@@ -2331,6 +2345,7 @@ export default function App() {
     const itemId = sanitizeId(item.id);
     const bankAccountId = sanitizeId(item.bankAccountId);
     const activeUid = user?.uid || 'guest';
+    const itemCreatedAt = item.createdAt ? ensureIsoTimestamp(item.createdAt) : clientTimestamp();
 
     const localItem: ReconcilingItem = {
       ...item,
@@ -2338,6 +2353,7 @@ export default function App() {
       bankAccountId,
       amount: Number(item.amount) || 0,
       isCleared: Boolean(item.isCleared),
+      createdAt: itemCreatedAt,
     };
 
     const nextItems = [localItem, ...reconcilingItems.filter((i) => i.id !== itemId)];
@@ -2356,8 +2372,8 @@ export default function App() {
       amount: Number(item.amount) || 0,
       isCleared: Boolean(item.isCleared),
       notes: (item.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2411,7 +2427,7 @@ export default function App() {
       amount: Number(item.amount) || 0,
       isCleared: Boolean(item.isCleared),
       notes: (item.notes || '').slice(0, 1000),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2518,8 +2534,8 @@ export default function App() {
       data: {
         ...newTx,
         ownerId: activeUid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt: clientTimestamp(),
+        updatedAt: clientTimestamp(),
       },
       timestamp: Date.now(),
     });
@@ -2542,7 +2558,7 @@ export default function App() {
             : targetAcc.currentBalance - item.amount;
           await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
             currentBalance: nextBalance,
-            updatedAt: serverTimestamp(),
+            updatedAt: clientTimestamp(),
           });
         }
         await setDoc(doc(db, 'bankTransactions', txId), {
@@ -2556,8 +2572,8 @@ export default function App() {
           category: isCredit ? 'sale_deposit' : 'bank_fee',
           isReconciled: true,
           notes: `Posted from Bank Reconciliation Statement (${item.referenceNumber})`.slice(0, 1000),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          createdAt: clientTimestamp(),
+          updatedAt: clientTimestamp(),
         });
         await deleteDoc(doc(db, 'reconcilingItems', item.id));
       },
@@ -2574,6 +2590,7 @@ export default function App() {
     const statementId = sanitizeId(statement.id);
     const bankAccountId = sanitizeId(statement.bankAccountId);
     const activeUid = user?.uid || 'guest';
+    const itemCreatedAt = statement.createdAt ? ensureIsoTimestamp(statement.createdAt) : clientTimestamp();
 
     const localStmt: BankReconciliationStatement = {
       ...statement,
@@ -2584,6 +2601,7 @@ export default function App() {
       adjustedBankBalance: Number(statement.adjustedBankBalance) || 0,
       adjustedBookBalance: Number(statement.adjustedBookBalance) || 0,
       variance: Number(statement.variance) || 0,
+      createdAt: itemCreatedAt,
     };
 
     const nextStmts = [localStmt, ...brsStatements.filter((s) => s.id !== statementId)];
@@ -2612,8 +2630,8 @@ export default function App() {
       preparedBy: statement.preparedBy.slice(0, 150),
       certifiedAt: statement.certifiedAt.slice(0, 60),
       notes: (statement.notes || '').slice(0, 1000),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2680,7 +2698,7 @@ export default function App() {
       preparedBy: statement.preparedBy.slice(0, 150),
       certifiedAt: statement.certifiedAt.slice(0, 60),
       notes: (statement.notes || '').slice(0, 1000),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2739,11 +2757,13 @@ export default function App() {
   const handleAddBankAccount = async (newAcc: BankAccount) => {
     const accountId = sanitizeId(newAcc.id);
     const activeUid = user?.uid || 'guest';
+    const itemCreatedAt = newAcc.createdAt ? ensureIsoTimestamp(newAcc.createdAt) : clientTimestamp();
 
     const localAcc: BankAccount = {
       ...newAcc,
       id: accountId,
       currentBalance: Number(newAcc.currentBalance) || 0,
+      createdAt: itemCreatedAt,
     };
 
     const nextAccounts = [...bankAccounts.filter((a) => a.id !== accountId), localAcc];
@@ -2761,8 +2781,8 @@ export default function App() {
       currentBalance: Number(newAcc.currentBalance) || 0,
       currency: (newAcc.currency || 'ETB').slice(0, 20),
       color: (newAcc.color || 'orange').slice(0, 40),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2792,11 +2812,14 @@ export default function App() {
   const handleUpdateBankAccount = async (updatedAcc: BankAccount) => {
     const accountId = sanitizeId(updatedAcc.id);
     const activeUid = user?.uid || 'guest';
+    const oldAcc = bankAccounts.find((a) => a.id === accountId);
+    const itemCreatedAt = oldAcc?.createdAt ? ensureIsoTimestamp(oldAcc.createdAt) : (updatedAcc.createdAt ? ensureIsoTimestamp(updatedAcc.createdAt) : clientTimestamp());
 
     const localAcc: BankAccount = {
       ...updatedAcc,
       id: accountId,
       currentBalance: Number(updatedAcc.currentBalance) || 0,
+      createdAt: itemCreatedAt,
     };
 
     const nextAccounts = bankAccounts.map((a) => (a.id === accountId ? localAcc : a));
@@ -2812,7 +2835,7 @@ export default function App() {
       currentBalance: Number(updatedAcc.currentBalance) || 0,
       currency: (updatedAcc.currency || 'ETB').slice(0, 20),
       color: (updatedAcc.color || 'orange').slice(0, 40),
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
 
     enqueueSyncMutation({
@@ -2886,9 +2909,15 @@ export default function App() {
 
   const handleSaveSettings = async (nextSettings: TaxSettings) => {
     const activeUid = user?.uid || 'guest';
-    setSettings(nextSettings);
+    const itemCreatedAt = nextSettings.createdAt ? ensureIsoTimestamp(nextSettings.createdAt) : clientTimestamp();
+    const cleanSettings: TaxSettings = {
+      ...nextSettings,
+      createdAt: itemCreatedAt,
+      updatedAt: clientTimestamp(),
+    };
+    setSettings(cleanSettings);
     setHasSettingsDoc(true);
-    saveUserLocalSettings(nextSettings, user?.uid);
+    saveUserLocalSettings(cleanSettings, user?.uid);
 
     const syncId = `sync-settings-${activeUid}`;
     const payload: Record<string, unknown> = {
@@ -2899,8 +2928,13 @@ export default function App() {
       defaultSalesTaxRate: Number(nextSettings.defaultSalesTaxRate) || 0,
       corporateTaxRate: Number(nextSettings.corporateTaxRate) || 0,
       fiscalYearStartMonth: Number(nextSettings.fiscalYearStartMonth) || 7,
-      updatedAt: serverTimestamp(),
+      updatedAt: clientTimestamp(),
     };
+
+    if (!hasSettingsDoc) {
+      payload.ownerId = activeUid;
+      payload.createdAt = itemCreatedAt;
+    }
 
     enqueueSyncMutation({
       id: syncId,
@@ -2922,7 +2956,7 @@ export default function App() {
           await setDoc(settingsRef, {
             ...payload,
             ownerId: user!.uid,
-            createdAt: serverTimestamp(),
+            createdAt: itemCreatedAt,
           });
         }
       },
@@ -3088,7 +3122,7 @@ export default function App() {
     csv += `--- SECTION 1: TOTAL DAILY SALES REGISTER ---\n`;
     csv += `Date,Receipt No,Customer,Cash Sales,Bank Transfer Sales,Subtotal,Tax Amount,Total Amount,Bank Reconciled\n`;
     [...sales]
-      .sort((a, b) => b.date.localeCompare(a.date) || ((b.createdAt || 0) - (a.createdAt || 0)))
+      .sort((a, b) => b.date.localeCompare(a.date) || (new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()))
       .forEach((s) => {
         const cashAmt = getSaleCashAmount(s);
         const transferAmt = getSaleBankTransferAmount(s);
@@ -3098,7 +3132,7 @@ export default function App() {
     csv += `\n--- SECTION 2: PURCHASED ITEMS & EXPENSE REGISTER ---\n`;
     csv += `Date,Invoice / FS No,Supplier Name,Supplier TIN,Amount Before Tax,Tax Paid,Total Amount,Deductible %\n`;
     [...purchases]
-      .sort((a, b) => b.date.localeCompare(a.date) || ((b.createdAt || 0) - (a.createdAt || 0)))
+      .sort((a, b) => b.date.localeCompare(a.date) || (new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()))
       .forEach((p) => {
         csv += `${p.date},${p.invoiceNumber},"${p.vendorName}","${p.vendorTin || ''}",${p.subtotal.toFixed(2)},${p.taxAmount.toFixed(2)},${p.totalAmount.toFixed(2)},${p.deductiblePercentage}%\n`;
       });

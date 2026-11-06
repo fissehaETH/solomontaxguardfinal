@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { DailyCashAuditSummary } from '../utils/dailyCashReconciliation';
 import { formatCurrency, formatDate, DEFAULT_TAX_SETTINGS } from '../utils/formatters';
+import { ensureIsoTimestamp } from '../utils/dataMappers';
 
 export interface GoogleSheetsSyncResult {
   success: boolean;
@@ -130,7 +131,9 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
 
   // 2. Sales Register Rows
   const salesHeaders = [
+    'Record ID',
     'Date',
+    'Created At (Original Timestamp)',
     'Receipt / Invoice #',
     'Customer Name',
     'Payment Method',
@@ -140,12 +143,16 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
     'VAT Rate (%)',
     'VAT Amount',
     'Net Base Sales',
+    'Bank Account ID',
+    'Reconciled With Bank?',
     'Notes',
   ];
   const salesRows: (string | number)[][] = [
     salesHeaders,
     ...sales.map((s) => [
+      s.id,
       s.date,
+      ensureIsoTimestamp(s.createdAt),
       s.receiptNumber,
       s.customerName || 'Cash Customer',
       s.paymentMethod,
@@ -155,13 +162,17 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
       s.taxRate * 100,
       s.taxAmount,
       s.subtotal,
+      s.bankAccountId || '',
+      s.isReconciledWithBank ? 'YES' : 'NO',
       s.notes || '',
     ]),
   ];
 
   // 3. Purchase Invoices Rows
   const purchaseHeaders = [
+    'Record ID',
     'Date',
+    'Created At (Original Timestamp)',
     'Invoice #',
     'Supplier Name',
     'Supplier TIN',
@@ -172,12 +183,16 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
     'Pre-Tax Subtotal',
     'Deductibility',
     '50k ETB Cash Rule',
+    'Bank Account ID',
+    'Reconciled With Bank?',
     'Notes',
   ];
   const purchaseRows: (string | number)[][] = [
     purchaseHeaders,
     ...purchases.map((p) => [
+      p.id,
       p.date,
+      ensureIsoTimestamp(p.createdAt),
       p.invoiceNumber,
       p.vendorName,
       p.vendorTin || '',
@@ -190,26 +205,31 @@ export function generateSheetsData(options: GoogleSheetsSyncOptions) {
       p.paymentMethod === 'cash' && p.totalAmount > 50000
         ? 'VIOLATION (>50k Cash)'
         : 'COMPLIANT',
+      p.bankAccountId || '',
+      p.isReconciledWithBank ? 'YES' : 'NO',
       p.notes || '',
     ]),
   ];
 
   // 4. Bank Accounts & Transactions Rows
   const bankAccountRows: (string | number)[][] = [
-    ['BANK ACCOUNTS LIST', '', '', '', ''],
-    ['Account Name', 'Bank Name', 'Account Number', 'Currency', 'Current Balance'],
+    ['BANK ACCOUNTS LIST', '', '', '', '', ''],
+    ['Record ID', 'Account Name', 'Bank Name', 'Account Number', 'Currency', 'Current Balance'],
     ...bankAccounts.map((a) => [
+      a.id,
       a.name,
       a.bankName,
       a.accountNumberMasked,
       a.currency,
       a.currentBalance,
     ]),
-    ['', '', '', '', ''],
-    ['BANK TRANSACTIONS REGISTER', '', '', '', '', '', ''],
-    ['Date', 'Bank Account ID', 'Description', 'Type', 'Amount', 'Category', 'Reconciled?'],
+    ['', '', '', '', '', ''],
+    ['BANK TRANSACTIONS REGISTER', '', '', '', '', '', '', '', ''],
+    ['Record ID', 'Date', 'Created At (Original Timestamp)', 'Bank Account ID', 'Description', 'Type', 'Amount', 'Category', 'Reconciled?'],
     ...bankTransactions.map((t) => [
+      t.id,
       t.date,
+      ensureIsoTimestamp(t.createdAt),
       t.bankAccountId,
       t.description,
       t.type.toUpperCase(),
@@ -810,7 +830,9 @@ export function parseSpreadsheetSheets(
     const headers = (salesRows[headerIdx] || []).map((h) => String(h || '').trim().toLowerCase());
     const findCol = (regex: RegExp) => headers.findIndex((h) => regex.test(h));
 
+    const idCol = findCol(/record id|^id$|መለያ/i);
     const dateCol = findCol(/date|ቀን/i);
+    const createdAtCol = findCol(/created at|original timestamp|timestamp|የተፈጠረበት/i);
     const receiptCol = findCol(/receipt|invoice|fs|ቁጥር/i);
     const customerCol = findCol(/customer|ደንበኛ/i);
     const methodCol = findCol(/method|payment|አከፋፈል/i);
@@ -820,6 +842,7 @@ export function parseSpreadsheetSheets(
     const taxRateCol = findCol(/rate|መጠን/i);
     const taxCol = findCol(/vat amount|tax amount|ታክስ|vat/i);
     const subtotalCol = findCol(/subtotal|net base|base/i);
+    const bankAccountCol = findCol(/bank account|account id/i);
     const notesCol = findCol(/note|ማስታወሻ/i);
 
     for (let i = headerIdx + 1; i < salesRows.length; i++) {
@@ -847,10 +870,25 @@ export function parseSpreadsheetSheets(
       const subtotal = subtotalCol >= 0 ? parseNumber(row[subtotalCol]) : totalAmount - taxAmount;
       const taxRate =
         taxRateCol >= 0 && parseNumber(row[taxRateCol]) > 0 ? parseNumber(row[taxRateCol]) / 100 : 0.15;
+      const bankAccountId = bankAccountCol >= 0 && row[bankAccountCol] ? String(row[bankAccountCol]).trim() : undefined;
       const notes = notesCol >= 0 && row[notesCol] ? String(row[notesCol]).trim() : '';
 
+      const rawId = idCol >= 0 && row[idCol] ? String(row[idCol]).trim() : '';
+      const saleId = rawId || `sale-${date.replace(/-/g, '')}-${receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+      // Tri-tier Date Immutability: Preserve exact client runtime timestamp
+      const rawCreatedAt = createdAtCol >= 0 && row[createdAtCol] ? row[createdAtCol] : null;
+      let createdAt: string | number = Date.now() - (salesRows.length - i) * 60000;
+      if (rawCreatedAt) {
+        if (typeof rawCreatedAt === 'number') {
+          createdAt = rawCreatedAt;
+        } else {
+          createdAt = String(rawCreatedAt).trim();
+        }
+      }
+
       sales.push({
-        id: `sale-${date.replace(/-/g, '')}-${receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        id: saleId,
         date,
         time: '17:00',
         receiptNumber,
@@ -870,9 +908,10 @@ export function parseSpreadsheetSheets(
         taxAmount: Math.round(taxAmount * 100) / 100,
         subtotal: Math.round(subtotal * 100) / 100,
         taxRate: taxRate > 1 ? taxRate / 100 : taxRate || 0.15,
+        bankAccountId,
         isReconciledWithBank: transferAmount > 0 || paymentMethod === 'bank_transfer',
         notes,
-        createdAt: Date.now() - (salesRows.length - i) * 60000,
+        createdAt,
       });
     }
   }
@@ -912,7 +951,9 @@ export function parseSpreadsheetSheets(
     const headers = (purchaseRows[headerIdx] || []).map((h) => String(h || '').trim().toLowerCase());
     const findCol = (regex: RegExp) => headers.findIndex((h) => regex.test(h));
 
+    const idCol = findCol(/record id|^id$|መለያ/i);
     const dateCol = findCol(/date|ቀን/i);
+    const createdAtCol = findCol(/created at|original timestamp|timestamp|የተፈጠረበት/i);
     const invoiceCol = findCol(/invoice|ደረሰኝ|ቁጥር/i);
     const vendorCol = findCol(/supplier|vendor|አቅራቢ/i);
     const tinCol = findCol(/tin|ቲን/i);
@@ -922,6 +963,7 @@ export function parseSpreadsheetSheets(
     const taxCol = findCol(/vat amount|tax|ተ.እ.ታ/i);
     const subtotalCol = findCol(/pre-tax|subtotal/i);
     const deductCol = findCol(/deduct/i);
+    const bankAccountCol = findCol(/bank account|account id/i);
     const notesCol = findCol(/note|ማስታወሻ/i);
 
     for (let i = headerIdx + 1; i < purchaseRows.length; i++) {
@@ -960,10 +1002,25 @@ export function parseSpreadsheetSheets(
           ? 'non_deductible'
           : 'fully_deductible';
       const deductiblePercentage = deductibility === 'fully_deductible' ? 100 : 0;
+      const bankAccountId = bankAccountCol >= 0 && row[bankAccountCol] ? String(row[bankAccountCol]).trim() : undefined;
       const notes = notesCol >= 0 && row[notesCol] ? String(row[notesCol]).trim() : '';
 
+      const rawId = idCol >= 0 && row[idCol] ? String(row[idCol]).trim() : '';
+      const purchaseId = rawId || `pur-${date.replace(/-/g, '')}-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+      // Tri-tier Date Immutability: Preserve exact client runtime timestamp
+      const rawCreatedAt = createdAtCol >= 0 && row[createdAtCol] ? row[createdAtCol] : null;
+      let createdAt: string | number = Date.now() - (purchaseRows.length - i) * 60000;
+      if (rawCreatedAt) {
+        if (typeof rawCreatedAt === 'number') {
+          createdAt = rawCreatedAt;
+        } else {
+          createdAt = String(rawCreatedAt).trim();
+        }
+      }
+
       purchases.push({
-        id: `pur-${date.replace(/-/g, '')}-${invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        id: purchaseId,
         date,
         invoiceNumber,
         vendorName,
@@ -979,9 +1036,10 @@ export function parseSpreadsheetSheets(
         subtotal: Math.round(subtotal * 100) / 100,
         deductibility,
         deductiblePercentage,
+        bankAccountId,
         isReconciledWithBank: paymentMethod === 'bank_transfer',
         notes,
-        createdAt: Date.now() - (purchaseRows.length - i) * 60000,
+        createdAt,
       });
     }
   }

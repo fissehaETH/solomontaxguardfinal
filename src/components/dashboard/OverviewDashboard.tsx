@@ -380,7 +380,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   createdAt: p.createdAt || 0,
                 })),
               ]
-                .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+                .sort((a, b) => b.date.localeCompare(a.date) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                 .slice(0, 6)
                 .map((entry) => {
                   if (entry.kind === 'sale') {

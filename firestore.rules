@@ -31,6 +31,11 @@ service cloud.firestore {
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
+    function isValidTimestamp(val) {
+      return (val is string && val.size() >= 10 && val.size() <= 40) ||
+             (val is timestamp) ||
+             (val is int && val > 0);
+    }
 
     // 1. SaleTransaction Validation Blueprint
     function isValidSaleTransaction(data) {
@@ -63,8 +68,8 @@ service cloud.firestore {
       (!('bankAccountId' in data) || (data.bankAccountId is string && data.bankAccountId.size() <= 128)) &&
       data.isReconciledWithBank is bool &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 2. PurchaseItem Validation Blueprint
@@ -103,8 +108,8 @@ service cloud.firestore {
       data.isReconciledWithBank is bool &&
       (!('receiptImage' in data) || (data.receiptImage is string && data.receiptImage.size() <= 800000)) &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 3. BankAccount Validation Blueprint
@@ -127,8 +132,8 @@ service cloud.firestore {
       data.currentBalance is number &&
       data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 20 &&
       data.color is string && data.color.size() >= 1 && data.color.size() <= 40 &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 4. BankTransaction Validation Blueprint
@@ -153,8 +158,8 @@ service cloud.firestore {
       (!('referenceId' in data) || (data.referenceId is string && data.referenceId.size() <= 128)) &&
       data.isReconciled is bool &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 5. DailyRegisterClose Validation Blueprint
@@ -188,8 +193,8 @@ service cloud.firestore {
       data.closedBy is string && data.closedBy.size() >= 1 && data.closedBy.size() <= 150 &&
       data.status is string && data.status in ['balanced', 'variance_flagged'] &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 6. ReconcilingItem Validation Blueprint
@@ -216,8 +221,8 @@ service cloud.firestore {
       data.amount is number && data.amount >= 0 &&
       data.isCleared is bool &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 7. BankReconciliationStatement Validation Blueprint
@@ -257,8 +262,8 @@ service cloud.firestore {
       data.preparedBy is string && data.preparedBy.size() >= 1 && data.preparedBy.size() <= 150 &&
       data.certifiedAt is string && data.certifiedAt.size() >= 1 && data.certifiedAt.size() <= 60 &&
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // 8. TaxSettings Validation Blueprint
@@ -282,8 +287,8 @@ service cloud.firestore {
       data.defaultSalesTaxRate is number && data.defaultSalesTaxRate >= 0 && data.defaultSalesTaxRate <= 1 &&
       data.corporateTaxRate is number && data.corporateTaxRate >= 0 && data.corporateTaxRate <= 1 &&
       data.fiscalYearStartMonth is number && data.fiscalYearStartMonth >= 1 && data.fiscalYearStartMonth <= 12 &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      isValidTimestamp(data.createdAt) &&
+      isValidTimestamp(data.updatedAt);
     }
 
     // Collection 1: /sales/{saleId}
@@ -292,15 +297,15 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(saleId) && isValidSaleTransaction(incoming()) &&
         incoming().id == saleId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().createdAt != null &&
+        incoming().updatedAt != null;
       allow update: if isSignedIn() && isValidSaleTransaction(incoming()) && isValidId(saleId) &&
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'receiptNumber', 'date', 'time', 'customerName', 'items',
           'subtotal', 'taxRate', 'taxAmount', 'totalAmount',
@@ -316,15 +321,15 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(purchaseId) && isValidPurchaseItem(incoming()) &&
         incoming().id == purchaseId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().createdAt != null &&
+        incoming().updatedAt != null;
       allow update: if isSignedIn() && isValidPurchaseItem(incoming()) && isValidId(purchaseId) &&
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
           'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
@@ -340,15 +345,15 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(accountId) && isValidBankAccount(incoming()) &&
         incoming().id == accountId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().createdAt != null &&
+        incoming().updatedAt != null;
       allow update: if isSignedIn() && isValidBankAccount(incoming()) && isValidId(accountId) &&
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'bankName', 'accountNumberMasked', 'type',
           'currentBalance', 'currency', 'color', 'updatedAt'
@@ -362,8 +367,8 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(txId) && isValidBankTransaction(incoming()) &&
         incoming().id == txId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
+        incoming().createdAt != null &&
+        incoming().updatedAt != null &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow update: if isSignedIn() && isValidBankTransaction(incoming()) && isValidId(txId) &&
@@ -372,7 +377,7 @@ service cloud.firestore {
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'bankAccountId', 'date', 'description', 'type', 'amount',
           'category', 'referenceId', 'isReconciled', 'notes', 'updatedAt'
@@ -388,15 +393,15 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(closeId) && isValidDailyRegisterClose(incoming()) &&
         incoming().id == closeId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().createdAt != null &&
+        incoming().updatedAt != null;
       allow update: if isSignedIn() && isValidDailyRegisterClose(incoming()) && isValidId(closeId) &&
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'date', 'openingFloat', 'cashSales', 'cardSales', 'bankTransferSales',
           'totalGrossSales', 'totalTaxCollected', 'cashPaidOutForPurchases',
@@ -412,8 +417,8 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(itemId) && isValidReconcilingItem(incoming()) &&
         incoming().id == itemId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
+        incoming().createdAt != null &&
+        incoming().updatedAt != null &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow update: if isSignedIn() && isValidReconcilingItem(incoming()) && isValidId(itemId) &&
@@ -422,7 +427,7 @@ service cloud.firestore {
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'bankAccountId', 'date', 'type', 'referenceNumber',
           'partyOrDescription', 'amount', 'isCleared', 'notes', 'updatedAt'
@@ -438,8 +443,8 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(statementId) && isValidBRSStatement(incoming()) &&
         incoming().id == statementId &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
+        incoming().createdAt != null &&
+        incoming().updatedAt != null &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow update: if isSignedIn() && isValidBRSStatement(incoming()) && isValidId(statementId) &&
@@ -448,7 +453,7 @@ service cloud.firestore {
         incoming().ownerId == existing().ownerId &&
         incoming().id == existing().id &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'statementNumber', 'bankAccountId', 'statementDate', 'periodStart', 'periodEnd',
           'balancePerBankStatement', 'unadjustedBookBalance', 'depositsInTransitTotal',
@@ -467,15 +472,15 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
         isValidTaxSettings(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().createdAt != null &&
+        incoming().updatedAt != null;
       allow update: if isSignedIn() && isValidTaxSettings(incoming()) && isValidId(userId) &&
         userId == request.auth.uid &&
         existing() != null &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
-        incoming().updatedAt == request.time &&
+        incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'businessName', 'taxIdNumber', 'currency', 'currencySymbol',
           'defaultSalesTaxRate', 'corporateTaxRate', 'fiscalYearStartMonth', 'updatedAt'

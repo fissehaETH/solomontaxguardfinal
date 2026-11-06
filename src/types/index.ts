@@ -40,7 +40,8 @@ export interface SaleTransaction {
   bankAccountId?: string; // which bank account it deposited into (if card/bank_transfer)
   isReconciledWithBank: boolean;
   notes?: string;
-  createdAt: number;
+  createdAt: number | string;
+  updatedAt?: number | string;
 }
 
 export interface PurchaseItem {
@@ -66,7 +67,8 @@ export interface PurchaseItem {
   isReconciledWithBank: boolean;
   receiptImage?: string; // base64 or placeholder preview
   notes?: string;
-  createdAt: number;
+  createdAt: number | string;
+  updatedAt?: number | string;
 }
 
 export interface BankAccount {
@@ -78,6 +80,8 @@ export interface BankAccount {
   currentBalance: number;
   currency: string;
   color: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 export interface BankTransaction {
@@ -103,6 +107,8 @@ export interface BankTransaction {
   referenceId?: string; // Sale ID or Purchase ID
   isReconciled: boolean;
   notes?: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 export interface DailyRegisterClose {
@@ -121,6 +127,8 @@ export interface DailyRegisterClose {
   closedBy: string;
   status: 'balanced' | 'variance_flagged';
   notes?: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 export interface TaxSettings {
@@ -138,6 +146,8 @@ export interface TaxSettings {
   googleAppsScriptUrl?: string;
   googleSyncMethod?: 'appscript';
   autoSyncToGoogleSheets?: boolean; // When true, automatically syncs changes to Google Sheets in the background
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 export interface AuditDiagnosticItem {
@@ -168,6 +178,8 @@ export interface ReconcilingItem {
   amount: number;
   isCleared: boolean;
   notes?: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
 export interface BankReconciliationStatement {
@@ -190,5 +202,7 @@ export interface BankReconciliationStatement {
   preparedBy: string;
   certifiedAt: string;
   notes?: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
 }
 
