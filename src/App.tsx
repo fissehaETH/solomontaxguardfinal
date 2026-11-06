@@ -312,7 +312,11 @@ export default function App() {
             saveUserLocalSettings(merged, activeUser);
           }
           setLastAutoSyncTime(new Date().toISOString());
-          showToast('Updated local storage with latest ledger data from cloud.');
+          const readSourceLabel =
+            imported.readSource === 'firestore_rest_api'
+              ? 'Primary Read (Firestore REST API from Apps Script)'
+              : 'Fallback Read (Google Sheet tabs)';
+          showToast(`Hydrated local storage via ${readSourceLabel}.`);
         }
       })
       .catch((err) => {
@@ -511,7 +515,13 @@ export default function App() {
           setDailyCloses(imported.dailyCloses);
           saveUserLocalCollection('dailyCloses', imported.dailyCloses, authUsername);
         }
-        showToast('Local ledger updated with latest records.');
+        const readSourceLabel =
+          imported.readSource === 'firestore_rest_api'
+            ? 'Primary Read (Firestore REST API from Apps Script)'
+            : 'Fallback Read (Google Sheet tabs)';
+        showToast(
+          `Local ledger updated via ${readSourceLabel} (${imported.sales.length} sales, ${imported.purchases.length} purchases).`
+        );
       } else {
         showToast('Local ledger is already up to date.');
       }
@@ -520,14 +530,90 @@ export default function App() {
     }
   };
 
+  // Tri-tier Tertiary Database Sync: Google Sheets
+  const syncToTertiaryGoogleSheet = async (overrides?: {
+    sales?: SaleTransaction[];
+    purchases?: PurchaseItem[];
+    bankAccounts?: BankAccount[];
+    bankTransactions?: BankTransaction[];
+    dailyCloses?: DailyRegisterClose[];
+  }) => {
+    const cleanUrl = settings.googleAppsScriptUrl?.trim();
+    const isAutoSyncEnabled = settings.autoSyncToGoogleSheets !== false;
+    if (!cleanUrl || !isAutoSyncEnabled || !navigator.onLine) {
+      return;
+    }
+    if (isAutoSyncingRef.current) return;
+
+    isAutoSyncingRef.current = true;
+    setAutoSyncStatus('syncing');
+
+    try {
+      const activeSales = overrides?.sales ?? sales;
+      const activePurchases = overrides?.purchases ?? purchases;
+      const activeBankAccounts = overrides?.bankAccounts ?? bankAccounts;
+      const activeBankTransactions = overrides?.bankTransactions ?? bankTransactions;
+      const activeDailyCloses = overrides?.dailyCloses ?? dailyCloses;
+
+      const cashAudit = calculateDailyCashExamination(
+        activeSales,
+        activePurchases,
+        activeBankTransactions,
+        activeDailyCloses
+      );
+
+      const res = await syncViaAppsScript(cleanUrl, {
+        appsScriptUrl: cleanUrl,
+        existingSpreadsheetId: settings.googleSheetId,
+        settings,
+        sales: activeSales,
+        purchases: activePurchases,
+        bankAccounts: activeBankAccounts,
+        bankTransactions: activeBankTransactions,
+        dailyCloses: activeDailyCloses,
+        dailyCashAudit: cashAudit,
+      });
+
+      if (res.success) {
+        setAutoSyncStatus('synced');
+        setLastAutoSyncTime(res.syncedAt);
+        setSettings((prev) => {
+          const updated: TaxSettings = {
+            ...prev,
+            lastGoogleSheetSyncAt: res.syncedAt,
+            googleSheetId: res.spreadsheetId || prev.googleSheetId,
+            googleSheetUrl: res.spreadsheetUrl || prev.googleSheetUrl,
+            googleSheetName: res.spreadsheetTitle || prev.googleSheetName,
+          };
+          saveUserLocalSettings(updated, authUsername);
+          return updated;
+        });
+      } else {
+        setAutoSyncStatus('error');
+      }
+    } catch (err) {
+      console.warn('Tertiary Google Sheet sync warning:', err);
+      setAutoSyncStatus('error');
+    } finally {
+      isAutoSyncingRef.current = false;
+    }
+  };
 
   // Online Firestore database write with fallback and error handling
+  // Tri-tier Write Flow: Write to Local Storage -> sync to Firestore -> sync to Google Sheet
   const safeWrite = async (
     action?: () => Promise<void>,
     op?: OperationType,
     path?: string,
     syncMutationId?: string,
-    uid?: string | null
+    uid?: string | null,
+    overridesForTertiary?: {
+      sales?: SaleTransaction[];
+      purchases?: PurchaseItem[];
+      bankAccounts?: BankAccount[];
+      bankTransactions?: BankTransaction[];
+      dailyCloses?: DailyRegisterClose[];
+    }
   ) => {
     if (action && auth.currentUser) {
       try {
@@ -550,6 +636,11 @@ export default function App() {
       removeSyncMutation(syncMutationId, uid);
       setPendingSyncCount(getPendingSyncMutations(uid).length);
     }
+
+    // Tertiary Database Sync: Asynchronously sync to Google Sheets
+    syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
+      console.warn('Asynchronous tertiary Google Sheet sync warning:', err);
+    });
   };
 
   // Firestore & Phone Local Storage Action Handlers
