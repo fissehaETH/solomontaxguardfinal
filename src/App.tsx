@@ -58,7 +58,13 @@ import {
   syncPendingToFirestore,
   performFirstTimeCloudSync,
   hasDoneInitialCloudSync,
+  applyRemoteRecordToLocalStorage,
 } from './utils/syncEngine';
+import {
+  resolveLastWriteWins,
+  createVersionedRecord,
+  getDeviceId,
+} from './utils/conflictResolution';
 import { LocalStorageSyncModal } from './components/common/LocalStorageSyncModal';
 import { AndroidShell } from './components/layout/AndroidShell';
 import { BottomNav, ActiveTab } from './components/layout/BottomNav';
@@ -589,8 +595,10 @@ export default function App() {
     }
   };
 
-  // Online Firestore database write with fallback and error handling
-  // Tri-tier Write Flow: Write to Local Storage -> sync to Firestore -> sync to Google Sheet
+  // Online Firestore database write with Last-Write-Wins Conflict Resolution:
+  // - If incoming device payload is older than database record: REJECT update completely (REJECTED_STALE_DATA),
+  //   fetch latest version from Firestore, and overwrite LocalStorage and UI state (Sync Down).
+  // - If incoming device payload is newer: ACCEPT and commit to Firestore (SYNC_SUCCESS), then trigger tertiary backup.
   const safeWrite = async (
     action?: () => Promise<void>,
     op?: OperationType,
@@ -603,10 +611,55 @@ export default function App() {
       bankAccounts?: BankAccount[];
       bankTransactions?: BankTransaction[];
       dailyCloses?: DailyRegisterClose[];
-    }
-  ) => {
+    },
+    incomingData?: Record<string, any>
+  ): Promise<boolean> => {
+    const activeUid = uid || user?.uid || auth.currentUser?.uid || 'guest';
     if (action && auth.currentUser) {
       try {
+        // Pre-check Firestore record for multi-device conflict resolution if path and incomingData are provided
+        if (incomingData && path && (op === OperationType.CREATE || op === OperationType.UPDATE || op === OperationType.WRITE)) {
+          try {
+            const parts = path.split('/');
+            if (parts.length === 2) {
+              const [colName, docKey] = parts;
+              const targetDocRef = doc(db, colName, docKey);
+              const existingSnap = await getDoc(targetDocRef);
+              if (existingSnap.exists()) {
+                const existingData = existingSnap.data() as any;
+                const conflict = resolveLastWriteWins(incomingData, existingData);
+                if (conflict.code === 'REJECTED_STALE_DATA') {
+                  console.warn(`[safeWrite] REJECTED_STALE_DATA on ${path}:`, conflict.message);
+                  // Sync Down: Overwrite LocalStorage with the remote database state
+                  applyRemoteRecordToLocalStorage(colName, existingData, activeUid);
+                  // Sync Down: Immediately update local React state to reflect database reality
+                  if (colName === 'sales') {
+                    setSales((prev) => prev.map((s) => (s.id === docKey ? (existingData as SaleTransaction) : s)));
+                  } else if (colName === 'purchases') {
+                    setPurchases((prev) => prev.map((p) => (p.id === docKey ? (existingData as PurchaseItem) : p)));
+                  } else if (colName === 'bankAccounts') {
+                    setBankAccounts((prev) => prev.map((a) => (a.id === docKey ? (existingData as BankAccount) : a)));
+                  } else if (colName === 'bankTransactions') {
+                    setBankTransactions((prev) => prev.map((t) => (t.id === docKey ? (existingData as BankTransaction) : t)));
+                  } else if (colName === 'dailyCloses') {
+                    setDailyCloses((prev) => prev.map((c) => (c.id === docKey ? (existingData as DailyRegisterClose) : c)));
+                  } else if (colName === 'settings') {
+                    setSettings((prev) => ({ ...prev, ...existingData }));
+                  }
+                  if (syncMutationId) {
+                    removeSyncMutation(syncMutationId, activeUid);
+                  }
+                  setPendingSyncCount(getPendingSyncMutations(activeUid).length);
+                  showToast('Conflict: Stale local change rejected. Synced latest version from cloud.');
+                  return false;
+                }
+              }
+            }
+          } catch (conflictCheckErr) {
+            console.warn('Conflict pre-check warning (proceeding with write):', conflictCheckErr);
+          }
+        }
+
         await action();
         if (syncMutationId) {
           removeSyncMutation(syncMutationId, uid);
@@ -619,6 +672,7 @@ export default function App() {
         syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
           console.warn('Asynchronous Firestore-to-Google-Sheets backup warning:', err);
         });
+        return true;
       } catch (err: unknown) {
         console.warn(`Firestore ${op || 'write'} warning on ${path || 'unknown'}:`, err);
         try {
@@ -626,11 +680,14 @@ export default function App() {
         } catch (e) {
           console.error('Handled Firestore safeWrite error:', e);
         }
+        return false;
       }
     } else if (syncMutationId) {
       removeSyncMutation(syncMutationId, uid);
       setPendingSyncCount(getPendingSyncMutations(uid).length);
+      return true;
     }
+    return false;
   };
 
   // Firestore & Phone Local Storage Action Handlers
@@ -675,25 +732,30 @@ export default function App() {
 
     // 3. Queue Sync Mutation
     const syncId = `sync-sale-${saleId}`;
+    const versioned = createVersionedRecord(
+      {
+        id: saleId,
+        ownerId: user?.uid || 'guest',
+        receiptNumber: newSale.receiptNumber.slice(0, 100),
+        date: newSale.date.slice(0, 30),
+        time: (newSale.time || '17:00').slice(0, 20),
+        customerName: (newSale.customerName || 'Daily Z-Summary').slice(0, 200),
+        items: (newSale.items || []).slice(0, 10),
+        subtotal: Number(newSale.subtotal) || 0,
+        taxRate: Number(newSale.taxRate) || 0,
+        taxAmount: Number(newSale.taxAmount) || 0,
+        totalAmount,
+        cashAmount,
+        bankTransferAmount: transferAmount,
+        paymentMethod,
+        isReconciledWithBank: Boolean(newSale.isReconciledWithBank),
+        notes: (newSale.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const salePayload: Record<string, unknown> = {
-      id: saleId,
-      ownerId: user?.uid || 'guest',
-      receiptNumber: newSale.receiptNumber.slice(0, 100),
-      date: newSale.date.slice(0, 30),
-      time: (newSale.time || '17:00').slice(0, 20),
-      customerName: (newSale.customerName || 'Daily Z-Summary').slice(0, 200),
-      items: (newSale.items || []).slice(0, 10),
-      subtotal: Number(newSale.subtotal) || 0,
-      taxRate: Number(newSale.taxRate) || 0,
-      taxAmount: Number(newSale.taxAmount) || 0,
-      totalAmount,
-      cashAmount,
-      bankTransferAmount: transferAmount,
-      paymentMethod,
-      isReconciledWithBank: Boolean(newSale.isReconciledWithBank),
-      notes: (newSale.notes || '').slice(0, 1000),
-      createdAt: itemCreatedAt,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
     if (transferAmount > 0 && newSale.bankAccountId) {
       salePayload.bankAccountId = sanitizeId(newSale.bankAccountId);
@@ -706,7 +768,7 @@ export default function App() {
       operation: 'set',
       docId: saleId,
       data: salePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -762,19 +824,22 @@ export default function App() {
         setBankTransactions(nextTxs);
         saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
 
+        const btxVersioned = createVersionedRecord(
+          {
+            ...saleBankTx,
+            ownerId: user?.uid || 'guest',
+          },
+          clientTimestamp()
+        );
+
         enqueueSyncMutation({
           id: `sync-btx-${txId}`,
           uid: user?.uid || 'guest',
           collection: 'bankTransactions',
           operation: 'set',
           docId: txId,
-          data: {
-            ...saleBankTx,
-            ownerId: user?.uid || 'guest',
-            createdAt: clientTimestamp(),
-            updatedAt: clientTimestamp(),
-          },
-          timestamp: Date.now(),
+          data: btxVersioned,
+          timestamp: btxVersioned.versionTimestamp,
         });
       }
     }
@@ -789,6 +854,8 @@ export default function App() {
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
               currentBalance: targetAcc.currentBalance + transferAmount,
               updatedAt: clientTimestamp(),
+              versionTimestamp: Date.now(),
+              lastModifiedByDeviceId: getDeviceId(),
             });
             const txId = sanitizeId(`btx-sale-${saleId}`);
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -805,6 +872,8 @@ export default function App() {
               notes: `Auto-reconciled with Daily Sales ${newSale.receiptNumber} (Transfer portion)`.slice(0, 1000),
               createdAt: clientTimestamp(),
               updatedAt: clientTimestamp(),
+              versionTimestamp: Date.now(),
+              lastModifiedByDeviceId: getDeviceId(),
             });
           }
         }
@@ -812,7 +881,9 @@ export default function App() {
       OperationType.CREATE,
       `sales/${saleId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      salePayload
     );
 
     showToast(
@@ -865,26 +936,32 @@ export default function App() {
 
     // 3. Queue sync mutation
     const syncId = `sync-sale-${saleId}`;
+    const versioned = createVersionedRecord(
+      {
+        receiptNumber: updatedSale.receiptNumber.slice(0, 100),
+        date: updatedSale.date.slice(0, 30),
+        time: (updatedSale.time || '17:00').slice(0, 20),
+        customerName: (updatedSale.customerName || 'Daily Z-Summary').slice(0, 200),
+        items: (updatedSale.items || []).slice(0, 10),
+        subtotal: Number(updatedSale.subtotal) || 0,
+        taxRate: Number(updatedSale.taxRate) || 0,
+        taxAmount: Number(updatedSale.taxAmount) || 0,
+        totalAmount,
+        cashAmount,
+        bankTransferAmount: transferAmount,
+        paymentMethod,
+        bankAccountId:
+          transferAmount > 0 && updatedSale.bankAccountId
+            ? sanitizeId(updatedSale.bankAccountId)
+            : '',
+        isReconciledWithBank: Boolean(updatedSale.isReconciledWithBank),
+        notes: (updatedSale.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const updatePayload: Record<string, unknown> = {
-      receiptNumber: updatedSale.receiptNumber.slice(0, 100),
-      date: updatedSale.date.slice(0, 30),
-      time: (updatedSale.time || '17:00').slice(0, 20),
-      customerName: (updatedSale.customerName || 'Daily Z-Summary').slice(0, 200),
-      items: (updatedSale.items || []).slice(0, 10),
-      subtotal: Number(updatedSale.subtotal) || 0,
-      taxRate: Number(updatedSale.taxRate) || 0,
-      taxAmount: Number(updatedSale.taxAmount) || 0,
-      totalAmount,
-      cashAmount,
-      bankTransferAmount: transferAmount,
-      paymentMethod,
-      bankAccountId:
-        transferAmount > 0 && updatedSale.bankAccountId
-          ? sanitizeId(updatedSale.bankAccountId)
-          : '',
-      isReconciledWithBank: Boolean(updatedSale.isReconciledWithBank),
-      notes: (updatedSale.notes || '').slice(0, 1000),
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     enqueueSyncMutation({
@@ -894,7 +971,7 @@ export default function App() {
       operation: 'update',
       docId: saleId,
       data: updatePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -1034,7 +1111,9 @@ export default function App() {
       OperationType.UPDATE,
       `sales/${saleId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      updatePayload
     );
 
     showToast(`Daily sales (${updatedSale.date}) updated!`);
@@ -1152,29 +1231,34 @@ export default function App() {
 
     // 3. Queue sync mutation
     const syncId = `sync-purchase-${purchaseId}`;
+    const versioned = createVersionedRecord(
+      {
+        id: purchaseId,
+        ownerId: user?.uid || 'guest',
+        invoiceNumber: newPurchase.invoiceNumber.slice(0, 100),
+        date: newPurchase.date.slice(0, 30),
+        vendorName: newPurchase.vendorName.slice(0, 200),
+        itemName: newPurchase.itemName.slice(0, 300),
+        category: newPurchase.category.slice(0, 60),
+        quantity: Number(newPurchase.quantity) || 0,
+        unitCost: Number(newPurchase.unitCost) || 0,
+        subtotal: Number(newPurchase.subtotal) || 0,
+        taxRate: Number(newPurchase.taxRate) || 0,
+        taxAmount: Number(newPurchase.taxAmount) || 0,
+        totalAmount,
+        cashAmount,
+        bankAmount,
+        deductibility: newPurchase.deductibility,
+        deductiblePercentage: Number(newPurchase.deductiblePercentage) || 0,
+        paymentMethod,
+        isReconciledWithBank: Boolean(newPurchase.isReconciledWithBank),
+        notes: (newPurchase.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const purchasePayload: Record<string, unknown> = {
-      id: purchaseId,
-      ownerId: user?.uid || 'guest',
-      invoiceNumber: newPurchase.invoiceNumber.slice(0, 100),
-      date: newPurchase.date.slice(0, 30),
-      vendorName: newPurchase.vendorName.slice(0, 200),
-      itemName: newPurchase.itemName.slice(0, 300),
-      category: newPurchase.category.slice(0, 60),
-      quantity: Number(newPurchase.quantity) || 0,
-      unitCost: Number(newPurchase.unitCost) || 0,
-      subtotal: Number(newPurchase.subtotal) || 0,
-      taxRate: Number(newPurchase.taxRate) || 0,
-      taxAmount: Number(newPurchase.taxAmount) || 0,
-      totalAmount,
-      cashAmount,
-      bankAmount,
-      deductibility: newPurchase.deductibility,
-      deductiblePercentage: Number(newPurchase.deductiblePercentage) || 0,
-      paymentMethod,
-      isReconciledWithBank: Boolean(newPurchase.isReconciledWithBank),
-      notes: (newPurchase.notes || '').slice(0, 1000),
-      createdAt: itemCreatedAt,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     if (newPurchase.vendorTin && newPurchase.vendorTin.trim()) {
@@ -1194,7 +1278,7 @@ export default function App() {
       operation: 'set',
       docId: purchaseId,
       data: purchasePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -1247,19 +1331,22 @@ export default function App() {
       setBankTransactions(nextTxs);
       saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
 
+      const purBtxVersioned = createVersionedRecord(
+        {
+          ...purBankTx,
+          ownerId: user?.uid || 'guest',
+        },
+        clientTimestamp()
+      );
+
       enqueueSyncMutation({
         id: `sync-btx-${txId}`,
         uid: user?.uid || 'guest',
         collection: 'bankTransactions',
         operation: 'set',
         docId: txId,
-        data: {
-          ...purBankTx,
-          ownerId: user?.uid || 'guest',
-          createdAt: clientTimestamp(),
-          updatedAt: clientTimestamp(),
-        },
-        timestamp: Date.now(),
+        data: purBtxVersioned,
+        timestamp: purBtxVersioned.versionTimestamp,
       });
     }
 
@@ -1273,6 +1360,8 @@ export default function App() {
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
               currentBalance: targetAcc.currentBalance - bankAmount,
               updatedAt: clientTimestamp(),
+              versionTimestamp: Date.now(),
+              lastModifiedByDeviceId: getDeviceId(),
             });
             const txId = sanitizeId(`btx-pur-${purchaseId}`);
             await setDoc(doc(db, 'bankTransactions', txId), {
@@ -1289,6 +1378,8 @@ export default function App() {
               notes: `Tied to verified invoice ${newPurchase.invoiceNumber}`.slice(0, 1000),
               createdAt: clientTimestamp(),
               updatedAt: clientTimestamp(),
+              versionTimestamp: Date.now(),
+              lastModifiedByDeviceId: getDeviceId(),
             });
           }
         }
@@ -1296,7 +1387,9 @@ export default function App() {
       OperationType.CREATE,
       `purchases/${purchaseId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      purchasePayload
     );
 
     showToast(
@@ -1350,29 +1443,35 @@ export default function App() {
 
     // 3. Queue sync mutation
     const syncId = `sync-purchase-${purchaseId}`;
+    const versioned = createVersionedRecord(
+      {
+        invoiceNumber: updatedPurchase.invoiceNumber.slice(0, 100),
+        date: updatedPurchase.date.slice(0, 30),
+        vendorName: updatedPurchase.vendorName.slice(0, 200),
+        vendorTin: (updatedPurchase.vendorTin || '').trim().slice(0, 100),
+        itemName: updatedPurchase.itemName.slice(0, 300),
+        category: updatedPurchase.category.slice(0, 60),
+        quantity: Number(updatedPurchase.quantity) || 0,
+        unitCost: Number(updatedPurchase.unitCost) || 0,
+        subtotal: Number(updatedPurchase.subtotal) || 0,
+        taxRate: Number(updatedPurchase.taxRate) || 0,
+        taxAmount: Number(updatedPurchase.taxAmount) || 0,
+        totalAmount,
+        cashAmount: newCashAmount,
+        bankAmount: newBankAmount,
+        deductibility: updatedPurchase.deductibility,
+        deductiblePercentage: Number(updatedPurchase.deductiblePercentage) || 0,
+        paymentMethod,
+        bankAccountId: newBankId ? sanitizeId(newBankId) : '',
+        isReconciledWithBank: Boolean(updatedPurchase.isReconciledWithBank),
+        receiptImage: (updatedPurchase.receiptImage || '').slice(0, 750000),
+        notes: (updatedPurchase.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const updatePayload: Record<string, unknown> = {
-      invoiceNumber: updatedPurchase.invoiceNumber.slice(0, 100),
-      date: updatedPurchase.date.slice(0, 30),
-      vendorName: updatedPurchase.vendorName.slice(0, 200),
-      vendorTin: (updatedPurchase.vendorTin || '').trim().slice(0, 100),
-      itemName: updatedPurchase.itemName.slice(0, 300),
-      category: updatedPurchase.category.slice(0, 60),
-      quantity: Number(updatedPurchase.quantity) || 0,
-      unitCost: Number(updatedPurchase.unitCost) || 0,
-      subtotal: Number(updatedPurchase.subtotal) || 0,
-      taxRate: Number(updatedPurchase.taxRate) || 0,
-      taxAmount: Number(updatedPurchase.taxAmount) || 0,
-      totalAmount,
-      cashAmount: newCashAmount,
-      bankAmount: newBankAmount,
-      deductibility: updatedPurchase.deductibility,
-      deductiblePercentage: Number(updatedPurchase.deductiblePercentage) || 0,
-      paymentMethod,
-      bankAccountId: newBankId ? sanitizeId(newBankId) : '',
-      isReconciledWithBank: Boolean(updatedPurchase.isReconciledWithBank),
-      receiptImage: (updatedPurchase.receiptImage || '').slice(0, 750000),
-      notes: (updatedPurchase.notes || '').slice(0, 1000),
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     enqueueSyncMutation({
@@ -1382,7 +1481,7 @@ export default function App() {
       operation: 'update',
       docId: purchaseId,
       data: updatePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -1490,7 +1589,9 @@ export default function App() {
       OperationType.UPDATE,
       `purchases/${purchaseId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      updatePayload
     );
 
     showToast(`Purchase invoice ${updatedPurchase.invoiceNumber} updated!`);
@@ -1584,25 +1685,30 @@ export default function App() {
 
     // 3. Queue sync mutation
     const syncId = `sync-close-${closeId}`;
+    const versioned = createVersionedRecord(
+      {
+        id: closeId,
+        ownerId: user?.uid || 'guest',
+        date: close.date.slice(0, 30),
+        openingFloat: Number(close.openingFloat) || 0,
+        cashSales: Number(close.cashSales) || 0,
+        cardSales: Number(close.cardSales) || 0,
+        bankTransferSales: Number(close.bankTransferSales) || 0,
+        totalGrossSales: Number(close.totalGrossSales) || 0,
+        totalTaxCollected: Number(close.totalTaxCollected) || 0,
+        cashPaidOutForPurchases: Number(close.cashPaidOutForPurchases) || 0,
+        actualCashCounted: Number(close.actualCashCounted) || 0,
+        cashVariance: Number(close.cashVariance) || 0,
+        bankDepositAmount: Number(close.bankDepositAmount) || 0,
+        closedBy: (close.closedBy || 'Owner').slice(0, 150),
+        status: close.status,
+        notes: (close.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const closePayload: Record<string, unknown> = {
-      id: closeId,
-      ownerId: user?.uid || 'guest',
-      date: close.date.slice(0, 30),
-      openingFloat: Number(close.openingFloat) || 0,
-      cashSales: Number(close.cashSales) || 0,
-      cardSales: Number(close.cardSales) || 0,
-      bankTransferSales: Number(close.bankTransferSales) || 0,
-      totalGrossSales: Number(close.totalGrossSales) || 0,
-      totalTaxCollected: Number(close.totalTaxCollected) || 0,
-      cashPaidOutForPurchases: Number(close.cashPaidOutForPurchases) || 0,
-      actualCashCounted: Number(close.actualCashCounted) || 0,
-      cashVariance: Number(close.cashVariance) || 0,
-      bankDepositAmount: Number(close.bankDepositAmount) || 0,
-      closedBy: (close.closedBy || 'Owner').slice(0, 150),
-      status: close.status,
-      notes: (close.notes || '').slice(0, 1000),
-      createdAt: itemCreatedAt,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     enqueueSyncMutation({
@@ -1612,7 +1718,7 @@ export default function App() {
       operation: 'set',
       docId: closeId,
       data: closePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -1648,19 +1754,22 @@ export default function App() {
       setBankTransactions(nextTxs);
       saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
 
+      const closeBtxVersioned = createVersionedRecord(
+        {
+          ...depositTx,
+          ownerId: user?.uid || 'guest',
+        },
+        clientTimestamp()
+      );
+
       enqueueSyncMutation({
         id: `sync-btx-${txId}`,
         uid: user?.uid || 'guest',
         collection: 'bankTransactions',
         operation: 'set',
         docId: txId,
-        data: {
-          ...depositTx,
-          ownerId: user?.uid || 'guest',
-          createdAt: clientTimestamp(),
-          updatedAt: clientTimestamp(),
-        },
-        timestamp: Date.now(),
+        data: closeBtxVersioned,
+        timestamp: closeBtxVersioned.versionTimestamp,
       });
     } else if (oldDeposit > 0 && closeDeposit === 0) {
       if (primaryAcc) {
@@ -1699,6 +1808,8 @@ export default function App() {
             await updateDoc(doc(db, 'bankAccounts', primaryAcc.id), {
               currentBalance: primaryAcc.currentBalance + delta,
               updatedAt: clientTimestamp(),
+              versionTimestamp: Date.now(),
+              lastModifiedByDeviceId: getDeviceId(),
             });
           }
           await setDoc(doc(db, 'bankTransactions', txId), {
@@ -1715,6 +1826,8 @@ export default function App() {
             notes: `Reconciled with Z-Report physical cash drawer count for ${close.date}`.slice(0, 1000),
             createdAt: clientTimestamp(),
             updatedAt: clientTimestamp(),
+            versionTimestamp: Date.now(),
+            lastModifiedByDeviceId: getDeviceId(),
           });
         } else if (oldDeposit > 0 && closeDeposit === 0) {
           await deleteDoc(doc(db, 'bankTransactions', txId)).catch(() => {});
@@ -1723,7 +1836,9 @@ export default function App() {
       existingClose ? OperationType.UPDATE : OperationType.CREATE,
       `dailyCloses/${closeId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      closePayload
     );
 
     showToast(`Daily Cash Count (${close.date}) saved! Status: ${close.status.toUpperCase()}`);
@@ -1809,19 +1924,24 @@ export default function App() {
 
     // 3. Queue sync mutation
     const syncId = `sync-btx-${txId}`;
+    const versioned = createVersionedRecord(
+      {
+        id: txId,
+        ownerId: activeUid,
+        bankAccountId,
+        date: tx.date.slice(0, 30),
+        description: tx.description.slice(0, 500),
+        type: tx.type,
+        amount: Number(tx.amount) || 0,
+        category: tx.category.slice(0, 60),
+        isReconciled: Boolean(tx.isReconciled),
+        notes: (tx.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const payload: Record<string, unknown> = {
-      id: txId,
-      ownerId: activeUid,
-      bankAccountId,
-      date: tx.date.slice(0, 30),
-      description: tx.description.slice(0, 500),
-      type: tx.type,
-      amount: Number(tx.amount) || 0,
-      category: tx.category.slice(0, 60),
-      isReconciled: Boolean(tx.isReconciled),
-      notes: (tx.notes || '').slice(0, 1000),
-      createdAt: itemCreatedAt,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
     if (tx.referenceId) {
       payload.referenceId = tx.referenceId.slice(0, 128);
@@ -1834,7 +1954,7 @@ export default function App() {
       operation: 'set',
       docId: txId,
       data: payload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -1864,13 +1984,17 @@ export default function App() {
           await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
             currentBalance: nextBalance,
             updatedAt: clientTimestamp(),
+            versionTimestamp: Date.now(),
+            lastModifiedByDeviceId: getDeviceId(),
           });
         }
       },
       OperationType.CREATE,
       `bankTransactions/${txId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      payload
     );
 
     showToast(
@@ -2078,16 +2202,22 @@ export default function App() {
     saveUserLocalCollection('bankTransactions', nextTxs, user?.uid);
 
     const syncId = `sync-btx-${txId}`;
+    const versioned = createVersionedRecord(
+      {
+        bankAccountId: newBankId,
+        date: updatedTx.date.slice(0, 30),
+        description: updatedTx.description.slice(0, 500),
+        type: updatedTx.type,
+        amount: Number(updatedTx.amount) || 0,
+        category: updatedTx.category.slice(0, 60),
+        isReconciled: Boolean(updatedTx.isReconciled),
+        notes: (updatedTx.notes || '').slice(0, 1000),
+      },
+      itemCreatedAt
+    );
+
     const updatePayload: Record<string, unknown> = {
-      bankAccountId: newBankId,
-      date: updatedTx.date.slice(0, 30),
-      description: updatedTx.description.slice(0, 500),
-      type: updatedTx.type,
-      amount: Number(updatedTx.amount) || 0,
-      category: updatedTx.category.slice(0, 60),
-      isReconciled: Boolean(updatedTx.isReconciled),
-      notes: (updatedTx.notes || '').slice(0, 1000),
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
     if (updatedTx.referenceId) {
       updatePayload.referenceId = updatedTx.referenceId.slice(0, 128);
@@ -2100,7 +2230,7 @@ export default function App() {
       operation: 'update',
       docId: txId,
       data: updatePayload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -2154,7 +2284,9 @@ export default function App() {
       OperationType.UPDATE,
       `bankTransactions/${txId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      updatePayload
     );
 
     showToast('Bank transaction updated!');
@@ -2852,18 +2984,23 @@ export default function App() {
     saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
 
     const syncId = `sync-bankacc-${accountId}`;
+    const versioned = createVersionedRecord(
+      {
+        id: accountId,
+        ownerId: activeUid,
+        name: newAcc.name.slice(0, 150),
+        bankName: newAcc.bankName.slice(0, 150),
+        accountNumberMasked: newAcc.accountNumberMasked.slice(0, 50),
+        type: newAcc.type,
+        currentBalance: Number(newAcc.currentBalance) || 0,
+        currency: (newAcc.currency || 'ETB').slice(0, 20),
+        color: (newAcc.color || 'orange').slice(0, 40),
+      },
+      itemCreatedAt
+    );
+
     const payload: Record<string, unknown> = {
-      id: accountId,
-      ownerId: activeUid,
-      name: newAcc.name.slice(0, 150),
-      bankName: newAcc.bankName.slice(0, 150),
-      accountNumberMasked: newAcc.accountNumberMasked.slice(0, 50),
-      type: newAcc.type,
-      currentBalance: Number(newAcc.currentBalance) || 0,
-      currency: (newAcc.currency || 'ETB').slice(0, 20),
-      color: (newAcc.color || 'orange').slice(0, 40),
-      createdAt: itemCreatedAt,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     enqueueSyncMutation({
@@ -2873,7 +3010,7 @@ export default function App() {
       operation: 'set',
       docId: accountId,
       data: payload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -2884,7 +3021,9 @@ export default function App() {
       OperationType.CREATE,
       `bankAccounts/${accountId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      payload
     );
 
     showToast(`Bank account "${newAcc.name}" saved!`);
@@ -2908,15 +3047,21 @@ export default function App() {
     saveUserLocalCollection('bankAccounts', nextAccounts, user?.uid);
 
     const syncId = `sync-bankacc-${accountId}`;
+    const versioned = createVersionedRecord(
+      {
+        name: updatedAcc.name.slice(0, 150),
+        bankName: updatedAcc.bankName.slice(0, 150),
+        accountNumberMasked: updatedAcc.accountNumberMasked.slice(0, 50),
+        type: updatedAcc.type,
+        currentBalance: Number(updatedAcc.currentBalance) || 0,
+        currency: (updatedAcc.currency || 'ETB').slice(0, 20),
+        color: (updatedAcc.color || 'orange').slice(0, 40),
+      },
+      itemCreatedAt
+    );
+
     const payload: Record<string, unknown> = {
-      name: updatedAcc.name.slice(0, 150),
-      bankName: updatedAcc.bankName.slice(0, 150),
-      accountNumberMasked: updatedAcc.accountNumberMasked.slice(0, 50),
-      type: updatedAcc.type,
-      currentBalance: Number(updatedAcc.currentBalance) || 0,
-      currency: (updatedAcc.currency || 'ETB').slice(0, 20),
-      color: (updatedAcc.color || 'orange').slice(0, 40),
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     enqueueSyncMutation({
@@ -2926,7 +3071,7 @@ export default function App() {
       operation: 'update',
       docId: accountId,
       data: payload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -2937,7 +3082,9 @@ export default function App() {
       OperationType.UPDATE,
       `bankAccounts/${accountId}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      payload
     );
 
     showToast(`Bank account "${updatedAcc.name}" updated!`);
@@ -3001,15 +3148,21 @@ export default function App() {
     saveUserLocalSettings(cleanSettings, user?.uid);
 
     const syncId = `sync-settings-${activeUid}`;
+    const versioned = createVersionedRecord(
+      {
+        businessName: nextSettings.businessName.slice(0, 200),
+        taxIdNumber: nextSettings.taxIdNumber.slice(0, 100),
+        currency: nextSettings.currency.slice(0, 20),
+        currencySymbol: nextSettings.currencySymbol.slice(0, 20),
+        defaultSalesTaxRate: Number(nextSettings.defaultSalesTaxRate) || 0,
+        corporateTaxRate: Number(nextSettings.corporateTaxRate) || 0,
+        fiscalYearStartMonth: Number(nextSettings.fiscalYearStartMonth) || 7,
+      },
+      itemCreatedAt
+    );
+
     const payload: Record<string, unknown> = {
-      businessName: nextSettings.businessName.slice(0, 200),
-      taxIdNumber: nextSettings.taxIdNumber.slice(0, 100),
-      currency: nextSettings.currency.slice(0, 20),
-      currencySymbol: nextSettings.currencySymbol.slice(0, 20),
-      defaultSalesTaxRate: Number(nextSettings.defaultSalesTaxRate) || 0,
-      corporateTaxRate: Number(nextSettings.corporateTaxRate) || 0,
-      fiscalYearStartMonth: Number(nextSettings.fiscalYearStartMonth) || 7,
-      updatedAt: clientTimestamp(),
+      ...versioned,
     };
 
     if (!hasSettingsDoc) {
@@ -3024,7 +3177,7 @@ export default function App() {
       operation: hasSettingsDoc ? 'update' : 'set',
       docId: activeUid,
       data: payload,
-      timestamp: Date.now(),
+      timestamp: versioned.versionTimestamp,
     });
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
 
@@ -3044,7 +3197,9 @@ export default function App() {
       OperationType.WRITE,
       `settings/${user?.uid}`,
       syncId,
-      user?.uid
+      user?.uid,
+      undefined,
+      payload
     );
 
     showToast(

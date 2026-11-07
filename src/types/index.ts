@@ -42,6 +42,8 @@ export interface SaleTransaction {
   notes?: string;
   createdAt: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface PurchaseItem {
@@ -69,6 +71,8 @@ export interface PurchaseItem {
   notes?: string;
   createdAt: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface BankAccount {
@@ -82,6 +86,8 @@ export interface BankAccount {
   color: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface BankTransaction {
@@ -109,6 +115,8 @@ export interface BankTransaction {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface DailyRegisterClose {
@@ -129,6 +137,8 @@ export interface DailyRegisterClose {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface TaxSettings {
@@ -148,6 +158,8 @@ export interface TaxSettings {
   autoSyncToGoogleSheets?: boolean; // When true, automatically syncs changes to Google Sheets in the background
   createdAt?: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface AuditDiagnosticItem {
@@ -204,5 +216,18 @@ export interface BankReconciliationStatement {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
+}
+
+export type SyncStatusCode = 'SYNC_SUCCESS' | 'REJECTED_STALE_DATA' | 'OFFLINE_QUEUED';
+
+export interface ConflictResolutionResult<T = any> {
+  status: SyncStatusCode;
+  code: SyncStatusCode;
+  winner: 'incoming' | 'remote';
+  message: string;
+  data?: T;
+  remoteData?: T;
 }
 

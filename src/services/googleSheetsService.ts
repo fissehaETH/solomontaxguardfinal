@@ -523,8 +523,27 @@ function doPost(e) {
       } catch (e) {}
     }
 
-    if (!ss) {
-      ss = SpreadsheetApp.create(payload.spreadsheetTitle || 'TaxGuard Financial Ledger');
+    // Check existing backup timestamp on Overview sheet to prevent stale overwrites
+    var existingTimestamp = null;
+    var overviewSheet = ss.getSheetByName('Overview & Tax Summary');
+    if (overviewSheet && overviewSheet.getLastRow() >= 2) {
+      try {
+        var cellVal = overviewSheet.getRange(2, 2).getValue();
+        if (cellVal) existingTimestamp = new Date(cellVal).getTime();
+      } catch (tsErr) {}
+    }
+
+    var incomingTimestamp = payload.versionTimestamp ? Number(payload.versionTimestamp) : (payload.syncedAt ? new Date(payload.syncedAt).getTime() : Date.now());
+
+    // Conflict Resolution: Reject stale backup payload
+    if (existingTimestamp && !isNaN(existingTimestamp) && incomingTimestamp < existingTimestamp) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        code: 'REJECTED_STALE_DATA',
+        message: 'REJECTED_STALE_DATA: Incoming backup payload is older than current sheet backup version.',
+        existingTimestamp: existingTimestamp,
+        incomingTimestamp: incomingTimestamp
+      })).setMimeType(ContentService.MimeType.JSON);
     }
 
     // 1. Overview & Tax Summary Tab
@@ -551,10 +570,12 @@ function doPost(e) {
 
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
+      code: 'SYNC_SUCCESS',
       spreadsheetId: ss.getId(),
       spreadsheetUrl: ss.getUrl(),
       spreadsheetTitle: ss.getName(),
       syncedAt: new Date().toISOString(),
+      versionTimestamp: incomingTimestamp,
       recordsCount: payload.recordsCount || {}
     })).setMimeType(ContentService.MimeType.JSON);
 

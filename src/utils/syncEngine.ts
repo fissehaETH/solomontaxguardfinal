@@ -5,6 +5,8 @@ import {
   setQuotaExceededFlag,
   loadUserLocalData,
   enqueueSyncMutation,
+  saveUserLocalCollection,
+  saveUserLocalSettings,
 } from './storage';
 import {
   SaleTransaction,
@@ -15,6 +17,7 @@ import {
   ReconcilingItem,
   BankReconciliationStatement,
   TaxSettings,
+  SyncStatusCode,
 } from '../types';
 import {
   db,
@@ -30,18 +33,71 @@ import {
   handleFirestoreError,
   OperationType,
 } from '../firebase';
+import { resolveLastWriteWins } from './conflictResolution';
 
 export interface SyncResult {
   success: boolean;
   syncedCount: number;
+  conflictsRejected: number;
   remainingCount: number;
-  reason?: 'completed' | 'quota_exceeded' | 'offline' | 'error';
+  status: SyncStatusCode;
+  reason?: 'completed' | 'quota_exceeded' | 'offline' | 'error' | 'conflicts_resolved';
   errorMessage?: string;
 }
 
 /**
- * Synchronizes pending offline mutations to Cloud Firestore.
- * Preserves original client runtime timestamps without serverTimestamp() recalibration.
+ * Sync Down: Overwrites device LocalStorage record with fresh remote database version.
+ */
+export function applyRemoteRecordToLocalStorage(
+  collectionName: string,
+  remoteRecord: any,
+  uid: string
+): void {
+  try {
+    const currentList = loadUserLocalData(uid);
+    if (collectionName === 'sales') {
+      const exists = currentList.sales.some((s) => s.id === remoteRecord.id);
+      const next = exists
+        ? currentList.sales.map((s) => (s.id === remoteRecord.id ? remoteRecord : s))
+        : [remoteRecord, ...currentList.sales];
+      saveUserLocalCollection('sales', next, uid);
+    } else if (collectionName === 'purchases') {
+      const exists = currentList.purchases.some((p) => p.id === remoteRecord.id);
+      const next = exists
+        ? currentList.purchases.map((p) => (p.id === remoteRecord.id ? remoteRecord : p))
+        : [remoteRecord, ...currentList.purchases];
+      saveUserLocalCollection('purchases', next, uid);
+    } else if (collectionName === 'bankAccounts') {
+      const exists = currentList.bankAccounts.some((a) => a.id === remoteRecord.id);
+      const next = exists
+        ? currentList.bankAccounts.map((a) => (a.id === remoteRecord.id ? remoteRecord : a))
+        : [...currentList.bankAccounts, remoteRecord];
+      saveUserLocalCollection('bankAccounts', next, uid);
+    } else if (collectionName === 'bankTransactions') {
+      const exists = currentList.bankTransactions.some((t) => t.id === remoteRecord.id);
+      const next = exists
+        ? currentList.bankTransactions.map((t) => (t.id === remoteRecord.id ? remoteRecord : t))
+        : [remoteRecord, ...currentList.bankTransactions];
+      saveUserLocalCollection('bankTransactions', next, uid);
+    } else if (collectionName === 'dailyCloses') {
+      const exists = currentList.dailyCloses.some((c) => c.id === remoteRecord.id);
+      const next = exists
+        ? currentList.dailyCloses.map((c) => (c.id === remoteRecord.id ? remoteRecord : c))
+        : [remoteRecord, ...currentList.dailyCloses];
+      saveUserLocalCollection('dailyCloses', next, uid);
+    } else if (collectionName === 'settings') {
+      saveUserLocalSettings({ ...currentList.settings, ...remoteRecord }, uid);
+    }
+  } catch (err) {
+    console.warn('Failed to overwrite local storage with remote record:', err);
+  }
+}
+
+/**
+ * Synchronizes pending offline mutations to Cloud Firestore with Last-Write-Wins conflict resolution:
+ * - If incoming payload is older than existing database record: REJECT update completely (REJECTED_STALE_DATA)
+ *   and overwrite device's LocalStorage state with the remote database record (Sync Down).
+ * - If incoming payload is newer: ACCEPT and overwrite database state (SYNC_SUCCESS).
  */
 export async function syncPendingToFirestore(uid?: string | null): Promise<SyncResult> {
   const activeUid = uid || 'local';
@@ -51,19 +107,40 @@ export async function syncPendingToFirestore(uid?: string | null): Promise<SyncR
     return {
       success: true,
       syncedCount: 0,
+      conflictsRejected: 0,
       remainingCount: 0,
+      status: 'SYNC_SUCCESS',
       reason: 'completed',
     };
   }
 
   let syncedCount = 0;
+  let conflictsRejected = 0;
 
   for (const item of pending) {
     try {
       const docRef = doc(db, item.collection, item.docId);
 
+      // Multi-device conflict resolution check against existing Firestore record
+      if (item.data && (item.operation === 'set' || item.operation === 'update')) {
+        const existingSnap = await getDoc(docRef);
+        if (existingSnap.exists()) {
+          const existingData = existingSnap.data() as any;
+          const conflict = resolveLastWriteWins(item.data, existingData);
+
+          // Outdated payload: REJECT update completely and perform Sync Down
+          if (conflict.code === 'REJECTED_STALE_DATA') {
+            console.warn(`[Sync Conflict] REJECTED_STALE_DATA on ${item.collection}/${item.docId}:`, conflict.message);
+            removeSyncMutation(item.id, activeUid);
+            applyRemoteRecordToLocalStorage(item.collection, existingData, activeUid);
+            conflictsRejected++;
+            continue;
+          }
+        }
+      }
+
       if (item.operation === 'set' && item.data) {
-        // Immutable date constraint: Preserve exact client runtime ISO timestamp
+        // Up-to-date payload: accept and overwrite remote database
         const clientCreatedAt = item.data.createdAt || new Date().toISOString();
         const clientUpdatedAt = item.data.updatedAt || new Date().toISOString();
         await setDoc(docRef, {
@@ -72,7 +149,6 @@ export async function syncPendingToFirestore(uid?: string | null): Promise<SyncR
           updatedAt: clientUpdatedAt,
         });
       } else if (item.operation === 'update' && item.data) {
-        // Date immutability: Never overwrite or recalibrate original createdAt
         const { createdAt: _ignoredCreatedAt, ...updateFields } = item.data;
         const clientUpdatedAt = item.data.updatedAt || new Date().toISOString();
         await updateDoc(docRef, {
@@ -99,7 +175,9 @@ export async function syncPendingToFirestore(uid?: string | null): Promise<SyncR
       return {
         success: false,
         syncedCount,
-        remainingCount: pending.length - syncedCount,
+        conflictsRejected,
+        remainingCount: pending.length - (syncedCount + conflictsRejected),
+        status: 'REJECTED_STALE_DATA',
         reason: 'error',
         errorMessage: err instanceof Error ? err.message : String(err),
       };
@@ -112,8 +190,10 @@ export async function syncPendingToFirestore(uid?: string | null): Promise<SyncR
   return {
     success: true,
     syncedCount,
+    conflictsRejected,
     remainingCount: 0,
-    reason: 'completed',
+    status: conflictsRejected > 0 ? 'REJECTED_STALE_DATA' : 'SYNC_SUCCESS',
+    reason: conflictsRejected > 0 ? 'conflicts_resolved' : 'completed',
   };
 }
 
