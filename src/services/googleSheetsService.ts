@@ -448,6 +448,18 @@ export async function syncToGoogleSheets(
 }
 
 /**
+ * Passive Secondary Cloud Backup: Pushes records committed in Firestore to Google Sheets.
+ * Client App never reads from Google Sheets.
+ * Direction: Client App -> LocalStorage -> Firebase Firestore -> Google Sheets.
+ */
+export async function backupFirestoreToGoogleSheets(
+  appsScriptUrl: string,
+  options: GoogleSheetsSyncOptions
+): Promise<GoogleSheetsSyncResult> {
+  return await syncViaAppsScript(appsScriptUrl, options);
+}
+
+/**
  * Production-ready Google Apps Script Code template for the user to copy-paste into Google Sheets
  */
 export const TAXGUARD_APPS_SCRIPT_CODE = `/**
