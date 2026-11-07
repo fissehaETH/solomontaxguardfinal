@@ -8,6 +8,11 @@ import {
   updateDoc,
   deleteDoc,
   writeBatch,
+  collection,
+  query,
+  where,
+  getDocs,
+  getDoc,
   signInWithGoogle,
   firebaseSignOut,
   onAuthStateChanged,
@@ -65,7 +70,7 @@ import { TaxAuditEngine } from './components/audit/TaxAuditEngine';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
-import { syncViaAppsScript, fetchDataFromGoogleSheets, GoogleSheetsImportData } from './services/googleSheetsService';
+import { syncViaAppsScript } from './services/googleSheetsService';
 import { CheckCircle2, Landmark, ShieldCheck, HelpCircle, Sun, Moon, Smartphone } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
@@ -262,67 +267,87 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Initial login & conflict resolution: pull latest data from Google Sheet if available
-  // Requirement 1 & 2: When logging in from a new device, do NOT push empty data. Perform read-only retrieval
-  // and force device to update local storage if remote sheet contains latest data.
+  // Strict Read Path: Client App <-> LocalStorage (Local UI state) OR Firebase Firestore (Cloud primary)
+  // Google Sheets is strictly an isolated passive backup destination and MUST NEVER be read into LocalStorage.
+  const syncFromFirestorePrimary = async (uid: string, notifyUser = false) => {
+    if (!navigator.onLine || !uid) return;
+    try {
+      const [salesSnap, purchasesSnap, accountsSnap, txsSnap, closesSnap, settingsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'sales'), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, 'purchases'), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, 'bankAccounts'), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, 'bankTransactions'), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, 'dailyCloses'), where('ownerId', '==', uid))),
+        getDoc(doc(db, 'settings', uid)),
+      ]);
+
+      const cloudSales: SaleTransaction[] = salesSnap.docs.map((d) => d.data() as SaleTransaction);
+      const cloudPurchases: PurchaseItem[] = purchasesSnap.docs.map((d) => d.data() as PurchaseItem);
+      const cloudAccounts: BankAccount[] = accountsSnap.docs.map((d) => d.data() as BankAccount);
+      const cloudTxs: BankTransaction[] = txsSnap.docs.map((d) => d.data() as BankTransaction);
+      const cloudCloses: DailyRegisterClose[] = closesSnap.docs.map((d) => d.data() as DailyRegisterClose);
+      const cloudSettings = settingsSnap.exists() ? (settingsSnap.data() as TaxSettings) : null;
+
+      const hasCloudData =
+        cloudSales.length > 0 || cloudPurchases.length > 0 || cloudAccounts.length > 0 || cloudCloses.length > 0;
+
+      if (hasCloudData) {
+        const local = loadUserLocalData(uid);
+        const localIsEmpty = local.sales.length === 0 && local.purchases.length === 0;
+        const cloudHasMore =
+          cloudSales.length > local.sales.length || cloudPurchases.length > local.purchases.length;
+
+        if (localIsEmpty || cloudHasMore || notifyUser) {
+          if (cloudSales.length > 0) {
+            setSales(cloudSales);
+            saveUserLocalCollection('sales', cloudSales, uid);
+          }
+          if (cloudPurchases.length > 0) {
+            setPurchases(cloudPurchases);
+            saveUserLocalCollection('purchases', cloudPurchases, uid);
+          }
+          if (cloudAccounts.length > 0) {
+            setBankAccounts(cloudAccounts);
+            saveUserLocalCollection('bankAccounts', cloudAccounts, uid);
+          }
+          if (cloudTxs.length > 0) {
+            setBankTransactions(cloudTxs);
+            saveUserLocalCollection('bankTransactions', cloudTxs, uid);
+          }
+          if (cloudCloses.length > 0) {
+            setDailyCloses(cloudCloses);
+            saveUserLocalCollection('dailyCloses', cloudCloses, uid);
+          }
+          if (cloudSettings) {
+            const merged = { ...local.settings, ...cloudSettings };
+            setSettings(merged);
+            saveUserLocalSettings(merged, uid);
+          }
+          if (notifyUser) {
+            showToast(
+              `Hydrated local storage from Firebase Firestore (Cloud Primary: ${cloudSales.length} sales, ${cloudPurchases.length} purchases).`
+            );
+          }
+        }
+      } else if (notifyUser) {
+        showToast('Local ledger is already up to date with Firebase Firestore.');
+      }
+    } catch (err) {
+      console.warn('Firestore primary read failed or offline:', err);
+      if (notifyUser) {
+        showToast('Could not reach Firebase Firestore. Local storage remains active.');
+      }
+    }
+  };
+
+  // Initial login & sync: pull latest data from Firebase Firestore (Cloud Primary)
   useEffect(() => {
     if (!isLoggedIn || !navigator.onLine) return;
-
-    const activeUser = localStorage.getItem('taxguard_username') || 'solomon';
-    const currentLocal = loadUserLocalData(activeUser);
-    const cleanUrl = currentLocal.settings.googleAppsScriptUrl?.trim() || settings.googleAppsScriptUrl?.trim();
-
-    if (!cleanUrl) return;
-
-    fetchDataFromGoogleSheets({ appsScriptUrl: cleanUrl, settings: currentLocal.settings })
-      .then((imported) => {
-        if (!imported) return;
-        const remoteHasRecords = imported.sales.length > 0 || imported.purchases.length > 0;
-        if (!remoteHasRecords) return;
-
-        const localIsEmpty = currentLocal.sales.length === 0 && currentLocal.purchases.length === 0;
-        const remoteHasMore =
-          imported.sales.length > currentLocal.sales.length ||
-          imported.purchases.length > currentLocal.purchases.length;
-
-        if (localIsEmpty || remoteHasMore) {
-          if (imported.sales.length > 0) {
-            setSales(imported.sales);
-            saveUserLocalCollection('sales', imported.sales, activeUser);
-          }
-          if (imported.purchases.length > 0) {
-            setPurchases(imported.purchases);
-            saveUserLocalCollection('purchases', imported.purchases, activeUser);
-          }
-          if (imported.bankAccounts.length > 0) {
-            setBankAccounts(imported.bankAccounts);
-            saveUserLocalCollection('bankAccounts', imported.bankAccounts, activeUser);
-          }
-          if (imported.bankTransactions.length > 0) {
-            setBankTransactions(imported.bankTransactions);
-            saveUserLocalCollection('bankTransactions', imported.bankTransactions, activeUser);
-          }
-          if (imported.dailyCloses.length > 0) {
-            setDailyCloses(imported.dailyCloses);
-            saveUserLocalCollection('dailyCloses', imported.dailyCloses, activeUser);
-          }
-          if (imported.settings && Object.keys(imported.settings).length > 0) {
-            const merged = { ...currentLocal.settings, ...imported.settings };
-            setSettings(merged);
-            saveUserLocalSettings(merged, activeUser);
-          }
-          setLastAutoSyncTime(new Date().toISOString());
-          const readSourceLabel =
-            imported.readSource === 'firestore_rest_api'
-              ? 'Primary Read (Firestore REST API from Apps Script)'
-              : 'Fallback Read (Google Sheet tabs)';
-          showToast(`Hydrated local storage via ${readSourceLabel}.`);
-        }
-      })
-      .catch((err) => {
-        console.warn('Quiet cloud fetch error:', err);
-      });
-  }, [isLoggedIn]);
+    const targetUid = user?.uid || auth.currentUser?.uid;
+    if (targetUid) {
+      syncFromFirestorePrimary(targetUid, false);
+    }
+  }, [isLoggedIn, user]);
 
   // Quiet background auto-sync to Google Sheets via Apps Script Web App when financial data changes
   useEffect(() => {
@@ -484,50 +509,15 @@ export default function App() {
     return () => window.removeEventListener('online', handleReconnected);
   }, [sales, purchases, bankAccounts, bankTransactions, dailyCloses, settings, authUsername]);
 
-  // On-demand refresh: pulls latest data quietly and updates local storage
+  // On-demand refresh: pulls latest data strictly from Firebase Firestore (Cloud Primary) into local storage
   const handleRefreshFromCloud = async () => {
-    const cleanUrl = settings.googleAppsScriptUrl?.trim();
-    if (!cleanUrl) {
-      showToast('No cloud synchronization URL configured in settings.');
+    const targetUid = user?.uid || auth.currentUser?.uid;
+    if (!targetUid) {
+      showToast('Please sign in to pull from the Firebase Firestore cloud database.');
       return;
     }
-    showToast('Checking for latest updates...');
-    try {
-      const imported = await fetchDataFromGoogleSheets({ appsScriptUrl: cleanUrl, settings });
-      if (imported && (imported.sales.length > 0 || imported.purchases.length > 0)) {
-        if (imported.sales.length > 0) {
-          setSales(imported.sales);
-          saveUserLocalCollection('sales', imported.sales, authUsername);
-        }
-        if (imported.purchases.length > 0) {
-          setPurchases(imported.purchases);
-          saveUserLocalCollection('purchases', imported.purchases, authUsername);
-        }
-        if (imported.bankAccounts.length > 0) {
-          setBankAccounts(imported.bankAccounts);
-          saveUserLocalCollection('bankAccounts', imported.bankAccounts, authUsername);
-        }
-        if (imported.bankTransactions.length > 0) {
-          setBankTransactions(imported.bankTransactions);
-          saveUserLocalCollection('bankTransactions', imported.bankTransactions, authUsername);
-        }
-        if (imported.dailyCloses.length > 0) {
-          setDailyCloses(imported.dailyCloses);
-          saveUserLocalCollection('dailyCloses', imported.dailyCloses, authUsername);
-        }
-        const readSourceLabel =
-          imported.readSource === 'firestore_rest_api'
-            ? 'Primary Read (Firestore REST API from Apps Script)'
-            : 'Fallback Read (Google Sheet tabs)';
-        showToast(
-          `Local ledger updated via ${readSourceLabel} (${imported.sales.length} sales, ${imported.purchases.length} purchases).`
-        );
-      } else {
-        showToast('Local ledger is already up to date.');
-      }
-    } catch {
-      showToast('Could not reach cloud backup. Check network connection.');
-    }
+    showToast('Querying Firebase Firestore (Cloud Primary)...');
+    await syncFromFirestorePrimary(targetUid, true);
   };
 
   // Tri-tier Tertiary Database Sync: Google Sheets
@@ -624,6 +614,11 @@ export default function App() {
         setPendingSyncCount(getPendingSyncMutations(uid).length);
         setIsQuotaExceeded(false);
         setQuotaExceededFlag(false);
+
+        // Passive Secondary Cloud Backup: Triggered ONLY after successful Firestore mutation commit
+        syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
+          console.warn('Asynchronous Firestore-to-Google-Sheets backup warning:', err);
+        });
       } catch (err: unknown) {
         console.warn(`Firestore ${op || 'write'} warning on ${path || 'unknown'}:`, err);
         try {
@@ -636,11 +631,6 @@ export default function App() {
       removeSyncMutation(syncMutationId, uid);
       setPendingSyncCount(getPendingSyncMutations(uid).length);
     }
-
-    // Tertiary Database Sync: Asynchronously sync to Google Sheets
-    syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
-      console.warn('Asynchronous tertiary Google Sheet sync warning:', err);
-    });
   };
 
   // Firestore & Phone Local Storage Action Handlers
@@ -3092,116 +3082,7 @@ export default function App() {
     showToast('Financial ledger reset to initial clean state on phone.');
   };
 
-  // Populate data from Google Sheet (First-time onboarding or restoring records)
-  const handlePopulateFromGoogleSheets = (
-    importedData: GoogleSheetsImportData,
-    mode: 'replace' | 'merge'
-  ) => {
-    const activeUid = user?.uid;
 
-    if (mode === 'replace') {
-      // 1. Replace all ledger collections with records fetched from Google Sheets
-      const newSales = importedData.sales;
-      const newPurchases = importedData.purchases;
-      const newBankAccounts =
-        importedData.bankAccounts.length > 0 ? importedData.bankAccounts : bankAccounts;
-      const newBankTransactions = importedData.bankTransactions;
-      const newDailyCloses = importedData.dailyCloses;
-
-      const newSettings: TaxSettings = {
-        ...settings,
-        ...(importedData.settings || {}),
-        googleSheetId: importedData.sourceSpreadsheetId || settings.googleSheetId,
-        googleSheetName: importedData.sourceSpreadsheetTitle || settings.googleSheetName,
-        lastGoogleSheetSyncAt: new Date().toISOString(),
-      };
-
-      // Save all collections to phone storage immediately
-      saveUserLocalCollection('sales', newSales, activeUid);
-      saveUserLocalCollection('purchases', newPurchases, activeUid);
-      saveUserLocalCollection('bankAccounts', newBankAccounts, activeUid);
-      saveUserLocalCollection('bankTransactions', newBankTransactions, activeUid);
-      saveUserLocalCollection('dailyCloses', newDailyCloses, activeUid);
-      saveUserLocalSettings(newSettings, activeUid);
-
-      // Update in-memory state
-      setSales(newSales);
-      setPurchases(newPurchases);
-      setBankAccounts(newBankAccounts);
-      setBankTransactions(newBankTransactions);
-      setDailyCloses(newDailyCloses);
-      setSettings(newSettings);
-      setLastAutoSyncTime(newSettings.lastGoogleSheetSyncAt || null);
-
-      showToast(
-        `Populated ${newSales.length} sales, ${newPurchases.length} purchases, and ${newBankTransactions.length} bank transactions from Google Sheet!`
-      );
-    } else {
-      // 2. Safe merge mode: add non-duplicate records
-      const existingSaleKeys = new Set(
-        sales.map((s) => `${s.date}__${s.receiptNumber.trim().toLowerCase()}`)
-      );
-      const additionalSales = importedData.sales.filter(
-        (s) => !existingSaleKeys.has(`${s.date}__${s.receiptNumber.trim().toLowerCase()}`)
-      );
-      const mergedSales = [...sales, ...additionalSales];
-
-      const existingPurchaseKeys = new Set(
-        purchases.map((p) => `${p.date}__${p.invoiceNumber.trim().toLowerCase()}`)
-      );
-      const additionalPurchases = importedData.purchases.filter(
-        (p) => !existingPurchaseKeys.has(`${p.date}__${p.invoiceNumber.trim().toLowerCase()}`)
-      );
-      const mergedPurchases = [...purchases, ...additionalPurchases];
-
-      const existingAccountIds = new Set(bankAccounts.map((b) => b.id));
-      const additionalAccounts = importedData.bankAccounts.filter(
-        (b) => !existingAccountIds.has(b.id)
-      );
-      const mergedAccounts = [...bankAccounts, ...additionalAccounts];
-
-      const existingTxnKeys = new Set(
-        bankTransactions.map((t) => `${t.date}__${t.referenceId || t.id}__${t.amount}`)
-      );
-      const additionalTxns = importedData.bankTransactions.filter(
-        (t) => !existingTxnKeys.has(`${t.date}__${t.referenceId || t.id}__${t.amount}`)
-      );
-      const mergedTxns = [...bankTransactions, ...additionalTxns];
-
-      const existingCloseDates = new Set(dailyCloses.map((c) => c.date));
-      const additionalCloses = importedData.dailyCloses.filter(
-        (c) => !existingCloseDates.has(c.date)
-      );
-      const mergedCloses = [...dailyCloses, ...additionalCloses];
-
-      const newSettings: TaxSettings = {
-        ...settings,
-        ...(importedData.settings || {}),
-        googleSheetId: importedData.sourceSpreadsheetId || settings.googleSheetId,
-        googleSheetName: importedData.sourceSpreadsheetTitle || settings.googleSheetName,
-        lastGoogleSheetSyncAt: new Date().toISOString(),
-      };
-
-      saveUserLocalCollection('sales', mergedSales, activeUid);
-      saveUserLocalCollection('purchases', mergedPurchases, activeUid);
-      saveUserLocalCollection('bankAccounts', mergedAccounts, activeUid);
-      saveUserLocalCollection('bankTransactions', mergedTxns, activeUid);
-      saveUserLocalCollection('dailyCloses', mergedCloses, activeUid);
-      saveUserLocalSettings(newSettings, activeUid);
-
-      setSales(mergedSales);
-      setPurchases(mergedPurchases);
-      setBankAccounts(mergedAccounts);
-      setBankTransactions(mergedTxns);
-      setDailyCloses(mergedCloses);
-      setSettings(newSettings);
-      setLastAutoSyncTime(newSettings.lastGoogleSheetSyncAt || null);
-
-      showToast(
-        `Merged +${additionalSales.length} sales and +${additionalPurchases.length} purchases from Google Sheet!`
-      );
-    }
-  };
 
   // CSV Export for Tax Authorities
   const handleExportCSV = () => {
