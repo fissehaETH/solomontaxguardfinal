@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TaxSettings } from '../../types';
 import { CURRENCY_OPTIONS } from '../../utils/formatters';
 import { Modal } from '../common/Modal';
-import { RotateCcw, Save, ShieldAlert, Building2, Sun, Moon, FileSpreadsheet, ExternalLink } from 'lucide-react';
+import { RotateCcw, Save, ShieldAlert, Building2, Sun, Moon, FileSpreadsheet, ExternalLink, Trash2, Cloud, Database, Download } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -10,6 +10,12 @@ interface SettingsModalProps {
   settings: TaxSettings;
   onSaveSettings: (settings: TaxSettings) => void;
   onResetData: () => void;
+  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
+    firestoreSuccess: boolean;
+    sheetsSuccess: boolean;
+    message: string;
+  }>;
+  onPullFromCloud?: () => Promise<void> | void;
   theme: 'light' | 'dark';
   onSetTheme: (theme: 'light' | 'dark') => void;
   onOpenGoogleSheets?: () => void;
@@ -21,12 +27,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   onResetData,
+  onClearCloudDatabases,
+  onPullFromCloud,
   theme,
   onSetTheme,
   onOpenGoogleSheets,
 }) => {
   const [formData, setFormData] = useState<TaxSettings>({ ...settings });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [showConfirmCloudClear, setShowConfirmCloudClear] = useState(false);
+  const [cloudClearTarget, setCloudClearTarget] = useState<'both' | 'firestore' | 'sheets'>('both');
+  const [isClearingCloud, setIsClearingCloud] = useState(false);
+  const [cloudClearResult, setCloudClearResult] = useState<string | null>(null);
+  const [isPullingCloud, setIsPullingCloud] = useState(false);
+  const [pullResult, setPullResult] = useState<string | null>(null);
 
   const [currentUsername, setCurrentUsername] = useState(() => {
     try {
@@ -321,19 +335,193 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
+        {/* Danger Zone: Database Management & Cloud Purge */}
+        <div className="pt-4 border-t border-stone-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 text-red-600" />
+              <span>Database Management &amp; Data Purge</span>
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <span className="text-xs font-semibold text-stone-800 block">
+                  Clear 2ndary &amp; 3rd Database
+                </span>
+                <span className="text-[11px] text-stone-500">
+                  Wipe remote records from Firebase Firestore (2ndary) and Google Sheets (3rd) while keeping your phone's LocalStorage intact.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmCloudClear(true);
+                  setShowConfirmReset(false);
+                  setCloudClearResult(null);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                <span>Clear Cloud Databases</span>
+              </button>
+            </div>
+
+            {/* Cloud Clear Confirmation Box */}
+            {showConfirmCloudClear && (
+              <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 space-y-3 animate-fade-in text-xs">
+                <div className="flex items-center gap-2 font-bold text-red-900">
+                  <Database className="w-4 h-4 text-red-700" />
+                  <span>Choose database(s) to clear:</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCloudClearTarget('both')}
+                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
+                      cloudClearTarget === 'both'
+                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
+                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <span className="block font-bold text-xs">Both 2ndary &amp; 3rd</span>
+                    <span className="text-[10px] opacity-90 block">Firestore + Sheets</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCloudClearTarget('firestore')}
+                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
+                      cloudClearTarget === 'firestore'
+                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
+                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <span className="block font-bold text-xs">2ndary Only</span>
+                    <span className="text-[10px] opacity-90 block">Firebase Firestore</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCloudClearTarget('sheets')}
+                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
+                      cloudClearTarget === 'sheets'
+                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
+                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <span className="block font-bold text-xs">3rd Only</span>
+                    <span className="text-[10px] opacity-90 block">Google Sheets</span>
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-red-800 leading-relaxed">
+                  <strong>Warning:</strong> This permanently deletes all data from the selected cloud database(s). Your local phone storage (Primary Database) will not be affected.
+                </p>
+
+                {cloudClearResult && (
+                  <div className="p-2.5 rounded-lg bg-white border border-red-300 text-stone-800 text-[11px] font-mono">
+                    {cloudClearResult}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmCloudClear(false)}
+                    disabled={isClearingCloud}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-stone-300 text-stone-700 hover:bg-stone-100 text-xs font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isClearingCloud}
+                    onClick={async () => {
+                      if (!onClearCloudDatabases) return;
+                      setIsClearingCloud(true);
+                      try {
+                        const res = await onClearCloudDatabases(cloudClearTarget);
+                        setCloudClearResult(res.message);
+                        setTimeout(() => {
+                          setShowConfirmCloudClear(false);
+                          setIsClearingCloud(false);
+                        }, 2500);
+                      } catch (err) {
+                        setCloudClearResult(err instanceof Error ? err.message : String(err));
+                        setIsClearingCloud(false);
+                      }
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isClearingCloud ? 'Clearing Remote Data...' : `Confirm Wipe (${cloudClearTarget.toUpperCase()})`}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Pull from Database Option */}
+            {onPullFromCloud && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-stone-200">
+                <div>
+                  <span className="text-xs font-semibold text-stone-800 block">
+                    Pull from Database
+                  </span>
+                  <span className="text-[11px] text-stone-500">
+                    Update all local phone records (sales, purchases, bank, reconciliation) with the latest data from Cloud Firestore.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsPullingCloud(true);
+                    setPullResult(null);
+                    try {
+                      await onPullFromCloud();
+                      setPullResult('Local storage successfully updated from database!');
+                      setTimeout(() => setPullResult(null), 3000);
+                    } catch (err) {
+                      setPullResult(err instanceof Error ? err.message : 'Pull failed.');
+                    } finally {
+                      setIsPullingCloud(false);
+                    }
+                  }}
+                  disabled={isPullingCloud}
+                  className="px-3 py-1.5 rounded-lg bg-orange-100 hover:bg-orange-200 border border-orange-300 text-orange-900 text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  <Download className={`w-3.5 h-3.5 text-orange-700 ${isPullingCloud ? 'animate-bounce' : ''}`} />
+                  <span>{isPullingCloud ? 'Pulling Data...' : 'Pull from Database'}</span>
+                </button>
+              </div>
+            )}
+
+            {pullResult && (
+              <div className="p-2 rounded-lg bg-orange-50 border border-orange-200 text-orange-900 text-xs font-medium">
+                {pullResult}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="pt-4 border-t border-stone-200 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => setShowConfirmReset(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-red-700 hover:bg-red-50 transition whitespace-nowrap"
+            onClick={() => {
+              setShowConfirmReset(true);
+              setShowConfirmCloudClear(false);
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-red-700 hover:bg-red-50 transition whitespace-nowrap cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Clear All Records</span>
+            <span>Reset Local Phone Data</span>
           </button>
 
           <button
             type="submit"
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-700 text-white font-semibold text-xs hover:bg-orange-800 transition whitespace-nowrap"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-700 text-white font-semibold text-xs hover:bg-orange-800 transition whitespace-nowrap cursor-pointer"
           >
             <Save className="w-4 h-4" />
             <span>Save Settings</span>
@@ -344,16 +532,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs space-y-2 mt-2">
             <div className="flex items-center gap-2 font-semibold">
               <ShieldAlert className="w-4 h-4 text-red-700" />
-              <span>Clear all sales, purchases & bank records?</span>
+              <span>Clear all sales, purchases &amp; bank records from phone?</span>
             </div>
             <p className="text-xs text-red-700">
-              This permanently clears all recorded entries from your device.
+              This permanently resets all recorded entries in phone LocalStorage to initial demo state.
             </p>
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => setShowConfirmReset(false)}
-                className="px-3 py-1.5 rounded-lg bg-white border border-stone-300 text-stone-700 hover:bg-stone-50"
+                className="px-3 py-1.5 rounded-lg bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 cursor-pointer"
               >
                 Cancel
               </button>
@@ -364,9 +552,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setShowConfirmReset(false);
                   onClose();
                 }}
-                className="px-3 py-1.5 rounded-lg bg-red-700 text-white font-semibold hover:bg-red-800"
+                className="px-3 py-1.5 rounded-lg bg-red-700 text-white font-semibold hover:bg-red-800 cursor-pointer"
               >
-                Confirm Clear
+                Confirm Local Reset
               </button>
             </div>
           </div>

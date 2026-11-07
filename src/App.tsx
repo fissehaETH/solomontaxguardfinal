@@ -76,7 +76,8 @@ import { TaxAuditEngine } from './components/audit/TaxAuditEngine';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { HowToUseModal } from './components/help/HowToUseModal';
 import { TaxAICopilotModal } from './components/ai/TaxAICopilotModal';
-import { syncViaAppsScript } from './services/googleSheetsService';
+import { GoogleSheetsSyncModal } from './components/sheets/GoogleSheetsSyncModal';
+import { syncViaAppsScript, clearGoogleSheetsBackup } from './services/googleSheetsService';
 import { CheckCircle2, Landmark, ShieldCheck, HelpCircle, Sun, Moon, Smartphone } from 'lucide-react';
 
 function sanitizeId(raw: string): string {
@@ -220,6 +221,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isAICopilotOpen, setIsAICopilotOpen] = useState(false);
+  const [isGoogleSheetsOpen, setIsGoogleSheetsOpen] = useState(false);
   const [initialEditingSale, setInitialEditingSale] = useState<SaleTransaction | null>(null);
   const [initialEditingPurchase, setInitialEditingPurchase] = useState<PurchaseItem | null>(null);
 
@@ -3237,6 +3239,97 @@ export default function App() {
     showToast('Financial ledger reset to initial clean state on phone.');
   };
 
+  /**
+   * Clears everything in the 2ndary Database (Firebase Firestore)
+   * and the 3rd Database (Google Sheets Passive Backup)
+   */
+  const handleClearCloudDatabases = async (target: 'both' | 'firestore' | 'sheets'): Promise<{
+    firestoreSuccess: boolean;
+    sheetsSuccess: boolean;
+    message: string;
+  }> => {
+    let firestoreSuccess = true;
+    let sheetsSuccess = true;
+    const details: string[] = [];
+
+    // 1. Clear 2ndary Database: Firebase Firestore
+    if (target === 'both' || target === 'firestore') {
+      const activeUid = user?.uid || auth.currentUser?.uid;
+      if (!activeUid) {
+        firestoreSuccess = false;
+        details.push('Firestore: Not signed in or user ID unavailable.');
+      } else if (!navigator.onLine) {
+        firestoreSuccess = false;
+        details.push('Firestore: Device is currently offline.');
+      } else {
+        try {
+          const collectionsToClear = [
+            'sales',
+            'purchases',
+            'bankTransactions',
+            'dailyCloses',
+            'reconcilingItems',
+            'brsStatements',
+            'bankAccounts',
+          ];
+
+          let deletedDocsCount = 0;
+          for (const colName of collectionsToClear) {
+            try {
+              const q = query(collection(db, colName), where('ownerId', '==', activeUid));
+              const snap = await getDocs(q);
+              if (!snap.empty) {
+                const CHUNK = 400;
+                for (let i = 0; i < snap.docs.length; i += CHUNK) {
+                  const chunk = snap.docs.slice(i, i + CHUNK);
+                  const batch = writeBatch(db);
+                  chunk.forEach((d) => batch.delete(d.ref));
+                  await batch.commit();
+                  deletedDocsCount += chunk.length;
+                }
+              }
+            } catch (colErr) {
+              console.warn(`Error clearing Firestore collection ${colName}:`, colErr);
+            }
+          }
+
+          details.push(`Firestore: Cleared ${deletedDocsCount} documents across all cloud collections.`);
+        } catch (fsErr) {
+          firestoreSuccess = false;
+          details.push(`Firestore error: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`);
+        }
+      }
+    }
+
+    // 2. Clear 3rd Database: Google Sheets (Spreadsheet via Apps Script Web App)
+    if (target === 'both' || target === 'sheets') {
+      const cleanUrl = settings.googleAppsScriptUrl?.trim();
+      if (!cleanUrl) {
+        sheetsSuccess = false;
+        details.push('Google Sheets: No Apps Script Web App URL configured in Settings.');
+      } else if (!navigator.onLine) {
+        sheetsSuccess = false;
+        details.push('Google Sheets: Device is currently offline.');
+      } else {
+        try {
+          const res = await clearGoogleSheetsBackup(cleanUrl, settings.googleSheetId);
+          details.push(`Google Sheets: ${res.message}`);
+        } catch (sheetErr) {
+          sheetsSuccess = false;
+          details.push(`Google Sheets error: ${sheetErr instanceof Error ? sheetErr.message : String(sheetErr)}`);
+        }
+      }
+    }
+
+    const summaryMsg = details.join(' | ');
+    showToast(summaryMsg);
+    return {
+      firestoreSuccess,
+      sheetsSuccess,
+      message: summaryMsg,
+    };
+  };
+
 
 
   // CSV Export for Tax Authorities
@@ -3519,6 +3612,7 @@ export default function App() {
       isQuotaExceeded={isQuotaExceeded}
       pendingSyncCount={pendingSyncCount}
       onOpenSyncModal={() => setIsSyncModalOpen(true)}
+      onOpenGoogleSheets={() => setIsGoogleSheetsOpen(true)}
       autoSyncStatus={autoSyncStatus}
       lastAutoSyncTime={lastAutoSyncTime}
       hasAppsScriptUrl={Boolean(settings.googleAppsScriptUrl)}
@@ -3543,6 +3637,7 @@ export default function App() {
           setActiveTab={setActiveTab}
           autoSyncStatus={autoSyncStatus}
           lastAutoSyncTime={lastAutoSyncTime}
+          onOpenGoogleSheets={() => setIsGoogleSheetsOpen(true)}
           onOpenAddSale={() => {
             setInitialEditingSale(null);
             setActiveTab('sales');
@@ -3675,8 +3770,13 @@ export default function App() {
         settings={settings}
         onSaveSettings={handleSaveSettings}
         onResetData={handleResetData}
+        onClearCloudDatabases={handleClearCloudDatabases}
         theme={theme}
         onSetTheme={setTheme}
+        onOpenGoogleSheets={() => {
+          setIsSettingsOpen(false);
+          setIsGoogleSheetsOpen(true);
+        }}
       />
 
       {/* How to Use Guide Modal */}
@@ -3694,6 +3794,22 @@ export default function App() {
         userEmail={user.email || `${authUsername} (Single User)`}
         onDataRestored={handleReloadFromLocalStorage}
         onPullFromCloud={handleRefreshFromCloud}
+        onClearCloudDatabases={handleClearCloudDatabases}
+      />
+
+      {/* Google Sheets Backup & Cloud Sync Modal */}
+      <GoogleSheetsSyncModal
+        isOpen={isGoogleSheetsOpen}
+        onClose={() => setIsGoogleSheetsOpen(false)}
+        settings={settings}
+        onUpdateSettings={handleSaveSettings}
+        sales={sales}
+        purchases={purchases}
+        bankAccounts={bankAccounts}
+        bankTransactions={bankTransactions}
+        dailyCloses={dailyCloses}
+        dailyCashAudit={calculateDailyCashExamination(sales, purchases, bankTransactions, dailyCloses)}
+        onClearCloudDatabases={handleClearCloudDatabases}
       />
 
       {/* Bottom Navigation */}

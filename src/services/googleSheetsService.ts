@@ -460,6 +460,69 @@ export async function backupFirestoreToGoogleSheets(
 }
 
 /**
+ * Clears all financial ledger tabs in the Tertiary Database (Google Sheets) via Apps Script Web App
+ */
+export async function clearGoogleSheetsBackup(
+  appsScriptUrl: string,
+  spreadsheetId?: string
+): Promise<{ success: boolean; message: string }> {
+  const cleanUrl = appsScriptUrl.trim();
+  if (!cleanUrl) {
+    throw new Error('Google Apps Script Web App URL is required to clear remote Google Sheet.');
+  }
+
+  const payload = {
+    action: 'clear',
+    spreadsheetId: spreadsheetId || undefined,
+    clearedAt: new Date().toISOString(),
+  };
+
+  try {
+    const res = await fetch(cleanUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && data.status === 'error') {
+        throw new Error(data.message || 'Failed to clear Google Sheets.');
+      }
+      return {
+        success: true,
+        message: data?.message || 'Google Sheet backup tabs cleared successfully.',
+      };
+    }
+    return {
+      success: true,
+      message: 'Clear command dispatched to Google Apps Script.',
+    };
+  } catch (err: unknown) {
+    // If CORS or redirect occurs with 200 via no-cors fallback:
+    try {
+      await fetch(cleanUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload),
+      });
+      return {
+        success: true,
+        message: 'Clear command sent to Google Sheets.',
+      };
+    } catch {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Google Sheets clear request failed: ${errMsg}`);
+    }
+  }
+}
+
+/**
  * Production-ready Google Apps Script Code template for the user to copy-paste into Google Sheets
  */
 export const TAXGUARD_APPS_SCRIPT_CODE = `/**
@@ -505,6 +568,11 @@ function doPost(e) {
     }
 
     var payload = JSON.parse(raw);
+
+    // If client requested clearing all Google Sheets backup tabs
+    if (payload.action === 'clear' || payload.action === 'reset' || payload.action === 'wipe') {
+      return handleClearSheet(payload.spreadsheetId);
+    }
 
     // If client requested reading/populating data
     if (payload.action === 'read' || payload.action === 'export' || payload.action === 'populate' || payload.action === 'fetch') {
@@ -583,6 +651,71 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify({
       status: 'error',
       message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * CLEARS ALL FINANCIAL BACKUP TABS IN GOOGLE SHEETS
+ */
+function handleClearSheet(spreadsheetId) {
+  try {
+    var ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (e) {}
+
+    if (!ss && spreadsheetId) {
+      try {
+        ss = SpreadsheetApp.openById(spreadsheetId);
+      } catch (e) {}
+    }
+
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        message: 'Spreadsheet not found for clearing.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var targetTabs = [
+      'Overview & Tax Summary',
+      'Sales Register',
+      'Purchase Invoices',
+      'Bank Accounts & Txns',
+      'Daily Cash Reconciliation'
+    ];
+
+    for (var i = 0; i < targetTabs.length; i++) {
+      var sheet = ss.getSheetByName(targetTabs[i]);
+      if (sheet) {
+        sheet.clear();
+      }
+    }
+
+    // Insert clean placeholder overview
+    var overview = ss.getSheetByName('Overview & Tax Summary');
+    if (!overview) {
+      overview = ss.insertSheet('Overview & Tax Summary');
+    }
+    overview.getRange(1, 1, 2, 2).setValues([
+      ['TaxGuard Secondary Cloud Backup', 'Status: Cleared / Empty Ledger'],
+      ['Cleared At', new Date().toISOString()]
+    ]);
+    overview.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#EA580C').setFontColor('#FFFFFF');
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'success',
+      code: 'CLEAR_SUCCESS',
+      message: 'All secondary backup tabs cleared successfully in Google Sheet.',
+      spreadsheetId: ss.getId(),
+      spreadsheetUrl: ss.getUrl(),
+      clearedAt: new Date().toISOString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'error',
+      message: 'Failed clearing Google Sheets: ' + err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }

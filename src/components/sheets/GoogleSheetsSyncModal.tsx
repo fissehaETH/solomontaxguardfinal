@@ -36,6 +36,7 @@ import {
   Database,
   Pencil,
   Link2,
+  Trash2,
 } from 'lucide-react';
 import { formatDate } from '../../utils/formatters';
 import { STORAGE_KEYS } from '../../utils/storage';
@@ -51,6 +52,11 @@ interface GoogleSheetsSyncModalProps {
   bankTransactions: BankTransaction[];
   dailyCloses: DailyRegisterClose[];
   dailyCashAudit: DailyCashAuditSummary;
+  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
+    firestoreSuccess: boolean;
+    sheetsSuccess: boolean;
+    message: string;
+  }>;
 }
 
 export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
@@ -64,6 +70,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   bankTransactions,
   dailyCloses,
   dailyCashAudit,
+  onClearCloudDatabases,
 }) => {
   const getInitialSavedUrl = () => {
     if (settings.googleAppsScriptUrl) return settings.googleAppsScriptUrl;
@@ -431,6 +438,47 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                   : `Trigger Backup to Google Sheets (${totalRecords} Records)`}
               </span>
             </button>
+
+            {/* Clear Tertiary Database (Google Sheets) Button */}
+            {onClearCloudDatabases && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm('Are you sure you want to clear all backup tabs in your Google Sheet? LocalStorage and Firestore will remain safe.')) {
+                      return;
+                    }
+                    setIsSyncing(true);
+                    setSyncError(null);
+                    try {
+                      const res = await onClearCloudDatabases('sheets');
+                      if (res.sheetsSuccess) {
+                        setSyncResult({
+                          success: true,
+                          spreadsheetId: settings.googleSheetId || '',
+                          spreadsheetUrl: settings.googleSheetUrl || '',
+                          spreadsheetTitle: settings.googleSheetName || 'Google Sheets',
+                          syncedAt: new Date().toISOString(),
+                          recordsCount: { sales: 0, purchases: 0, bankAccounts: 0, bankTransactions: 0, dailyCashRecords: 0 },
+                          method: 'appscript',
+                        });
+                      } else {
+                        setSyncError(res.message);
+                      }
+                    } catch (err) {
+                      setSyncError(err instanceof Error ? err.message : String(err));
+                    } finally {
+                      setIsSyncing(false);
+                    }
+                  }}
+                  disabled={isSyncing || !appsScriptUrl.trim()}
+                  className="w-full py-2.5 px-3 rounded-xl border border-red-300 bg-red-50 hover:bg-red-100 text-red-800 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>Clear All Google Sheet Backup Tabs</span>
+                </button>
+              </div>
+            )}
 
             {syncError && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 flex items-center gap-2">

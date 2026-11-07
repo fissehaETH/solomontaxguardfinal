@@ -14,6 +14,8 @@ import {
   FileText,
   X,
   Info,
+  Trash2,
+  AlertOctagon,
 } from 'lucide-react';
 import {
   getLocalStorageStats,
@@ -30,6 +32,11 @@ interface LocalStorageSyncModalProps {
   userEmail?: string | null;
   onDataRestored?: () => void;
   onPullFromCloud?: () => Promise<void> | void;
+  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
+    firestoreSuccess: boolean;
+    sheetsSuccess: boolean;
+    message: string;
+  }>;
 }
 
 export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
@@ -39,9 +46,12 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
   userEmail,
   onDataRestored,
   onPullFromCloud,
+  onClearCloudDatabases,
 }) => {
   const [stats, setStats] = useState<LocalStorageStats | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearTarget, setClearTarget] = useState<'both' | 'firestore' | 'sheets'>('both');
   const [syncFeedback, setSyncFeedback] = useState<{
     type: 'success' | 'warning' | 'error' | 'info';
     message: string;
@@ -371,6 +381,110 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
               </label>
             </div>
           </div>
+
+          {/* Clear Secondary & Tertiary Database Section */}
+          {onClearCloudDatabases && (
+            <div className="p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/40 dark:bg-red-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-red-900 dark:text-red-400 text-xs flex items-center gap-1.5">
+                    <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+                    <span>Clear 2ndary &amp; 3rd Database</span>
+                  </span>
+                  <span className="text-[11px] text-stone-500 dark:text-stone-400 block pt-0.5">
+                    Wipe remote records from Firestore (2ndary) and/or Google Sheets (3rd). Phone LocalStorage stays safe.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowClearConfirm(!showClearConfirm)}
+                  className="py-1.5 px-3 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 font-bold text-xs hover:bg-red-200 dark:hover:bg-red-800/60 transition cursor-pointer shrink-0"
+                >
+                  Clear Remote
+                </button>
+              </div>
+
+              {showClearConfirm && (
+                <div className="p-3 rounded-xl bg-white dark:bg-stone-900 border border-red-200 dark:border-red-800 space-y-2.5 text-xs animate-fade-in">
+                  <div className="text-[11px] font-semibold text-stone-700 dark:text-stone-300">
+                    Select target cloud database to wipe:
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setClearTarget('both')}
+                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
+                        clearTarget === 'both'
+                          ? 'bg-red-700 text-white border-red-800'
+                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
+                      }`}
+                    >
+                      Both (2nd + 3rd)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setClearTarget('firestore')}
+                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
+                        clearTarget === 'firestore'
+                          ? 'bg-red-700 text-white border-red-800'
+                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
+                      }`}
+                    >
+                      Firestore Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setClearTarget('sheets')}
+                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
+                        clearTarget === 'sheets'
+                          ? 'bg-red-700 text-white border-red-800'
+                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
+                      }`}
+                    >
+                      Sheets Only
+                    </button>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowClearConfirm(false)}
+                      disabled={isSyncing}
+                      className="px-3 py-1.5 rounded-lg border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncing}
+                      onClick={async () => {
+                        setIsSyncing(true);
+                        try {
+                          const res = await onClearCloudDatabases(clearTarget);
+                          setSyncFeedback({
+                            type: res.firestoreSuccess && res.sheetsSuccess ? 'success' : 'warning',
+                            message: res.message,
+                          });
+                          setShowClearConfirm(false);
+                          refreshStats();
+                        } catch (err) {
+                          setSyncFeedback({
+                            type: 'error',
+                            message: err instanceof Error ? err.message : 'Wipe failed.',
+                          });
+                        } finally {
+                          setIsSyncing(false);
+                        }
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      Confirm Remote Wipe
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Modal Footer */}
