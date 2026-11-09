@@ -48,7 +48,7 @@ service cloud.firestore {
         'id', 'ownerId', 'receiptNumber', 'date', 'time', 'customerName', 'items',
         'subtotal', 'taxRate', 'taxAmount', 'totalAmount', 'cashAmount', 'bankTransferAmount',
         'paymentMethod', 'bankAccountId', 'isReconciledWithBank', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -71,6 +71,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -86,9 +87,9 @@ service cloud.firestore {
       data.keys().hasOnly([
         'id', 'ownerId', 'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
         'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
-        'totalAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
+        'totalAmount', 'cashAmount', 'bankAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
         'bankAccountId', 'isReconciledWithBank', 'receiptImage', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -105,6 +106,8 @@ service cloud.firestore {
       data.taxRate is number && data.taxRate >= 0 && data.taxRate <= 1 &&
       data.taxAmount is number && data.taxAmount >= 0 &&
       data.totalAmount is number && data.totalAmount >= 0 &&
+      (!('cashAmount' in data) || (data.cashAmount is number && data.cashAmount >= 0)) &&
+      (!('bankAmount' in data) || (data.bankAmount is number && data.bankAmount >= 0)) &&
       data.deductibility is string && data.deductibility in ['fully_deductible', 'partially_deductible', 'non_deductible'] &&
       data.deductiblePercentage is number && data.deductiblePercentage >= 0 && data.deductiblePercentage <= 100 &&
       data.paymentMethod is string && data.paymentMethod in ['cash', 'bank_transfer'] &&
@@ -114,6 +117,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -127,7 +131,7 @@ service cloud.firestore {
       data.keys().hasOnly([
         'id', 'ownerId', 'name', 'bankName', 'accountNumberMasked',
         'type', 'currentBalance', 'currency', 'color', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -141,6 +145,7 @@ service cloud.firestore {
       data.color is string && data.color.size() >= 1 && data.color.size() <= 40 &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -152,9 +157,9 @@ service cloud.firestore {
         'type', 'amount', 'category', 'isReconciled', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'id', 'ownerId', 'bankAccountId', 'date', 'description',
+        'id', 'ownerId', 'bankAccountId', 'date', 'description', 'reason',
         'type', 'amount', 'category', 'referenceId', 'isReconciled', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -162,6 +167,7 @@ service cloud.firestore {
       isValidId(data.bankAccountId) &&
       data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
       data.description is string && data.description.size() >= 1 && data.description.size() <= 500 &&
+      (!('reason' in data) || (data.reason is string && data.reason.size() <= 500)) &&
       data.type is string && data.type in ['credit', 'debit'] &&
       data.amount is number && data.amount >= 0 &&
       data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
@@ -170,6 +176,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -187,7 +194,7 @@ service cloud.firestore {
         'bankTransferSales', 'totalGrossSales', 'totalTaxCollected',
         'cashPaidOutForPurchases', 'actualCashCounted', 'cashVariance',
         'bankDepositAmount', 'closedBy', 'status', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -208,6 +215,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -221,7 +229,7 @@ service cloud.firestore {
       data.keys().hasOnly([
         'id', 'ownerId', 'bankAccountId', 'date', 'type',
         'referenceNumber', 'partyOrDescription', 'amount', 'isCleared', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -239,6 +247,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -258,7 +267,7 @@ service cloud.firestore {
         'depositsInTransitTotal', 'outstandingChequesTotal', 'unrecordedCreditsTotal',
         'bankChargesTotal', 'adjustedBankBalance', 'adjustedBookBalance', 'variance',
         'status', 'preparedBy', 'certifiedAt', 'notes', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerId) &&
@@ -283,6 +292,7 @@ service cloud.firestore {
       (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
     }
@@ -297,8 +307,9 @@ service cloud.firestore {
       data.keys().hasOnly([
         'ownerId', 'businessName', 'taxIdNumber', 'currency',
         'currencySymbol', 'defaultSalesTaxRate', 'corporateTaxRate',
-        'fiscalYearStartMonth', 'createdAt', 'updatedAt',
-        'versionTimestamp', 'lastModifiedByDeviceId'
+        'fiscalYearStartMonth', 'googleSheetId', 'googleSheetUrl', 'googleSheetName',
+        'googleAppsScriptUrl', 'googleSyncMethod', 'autoSyncToGoogleSheets', 'lastGoogleSheetSyncAt',
+        'createdAt', 'updatedAt', 'version', 'versionTimestamp', 'lastModifiedByDeviceId'
       ]) &&
       isValidId(data.ownerId) &&
       data.ownerId == request.auth.uid &&
@@ -309,10 +320,38 @@ service cloud.firestore {
       data.defaultSalesTaxRate is number && data.defaultSalesTaxRate >= 0 && data.defaultSalesTaxRate <= 1 &&
       data.corporateTaxRate is number && data.corporateTaxRate >= 0 && data.corporateTaxRate <= 1 &&
       data.fiscalYearStartMonth is number && data.fiscalYearStartMonth >= 1 && data.fiscalYearStartMonth <= 12 &&
+      (!('googleSheetId' in data) || (data.googleSheetId is string && data.googleSheetId.size() <= 128)) &&
+      (!('googleSheetUrl' in data) || (data.googleSheetUrl is string && data.googleSheetUrl.size() <= 500)) &&
+      (!('googleSheetName' in data) || (data.googleSheetName is string && data.googleSheetName.size() <= 200)) &&
+      (!('googleAppsScriptUrl' in data) || (data.googleAppsScriptUrl is string && data.googleAppsScriptUrl.size() <= 500)) &&
+      (!('googleSyncMethod' in data) || (data.googleSyncMethod is string && data.googleSyncMethod.size() <= 50)) &&
+      (!('autoSyncToGoogleSheets' in data) || (data.autoSyncToGoogleSheets is bool)) &&
+      (!('lastGoogleSheetSyncAt' in data) || (data.lastGoogleSheetSyncAt is string && data.lastGoogleSheetSyncAt.size() <= 50)) &&
       isValidTimestamp(data.createdAt) &&
       isValidTimestamp(data.updatedAt) &&
+      (!('version' in data) || (data.version is int || data.version is number)) &&
       (!('versionTimestamp' in data) || (data.versionTimestamp is int || data.versionTimestamp is number)) &&
       (!('lastModifiedByDeviceId' in data) || (data.lastModifiedByDeviceId is string && data.lastModifiedByDeviceId.size() <= 128));
+    }
+
+    // 9. AuditLog Validation Blueprint
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+        'id', 'action', 'entityType', 'entityId', 'performedBy', 'version', 'timestamp', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'action', 'entityType', 'entityId', 'performedBy', 'version', 'timestamp', 'details', 'createdAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.entityId) &&
+      isValidId(data.performedBy) &&
+      data.performedBy == request.auth.uid &&
+      data.action is string && data.action.size() >= 1 && data.action.size() <= 100 &&
+      data.entityType is string && data.entityType.size() >= 1 && data.entityType.size() <= 100 &&
+      (data.version is int || data.version is number) &&
+      data.timestamp is string && data.timestamp.size() >= 1 && data.timestamp.size() <= 50 &&
+      (!('details' in data) || (data.details is string && data.details.size() <= 2000)) &&
+      isValidTimestamp(data.createdAt);
     }
 
     // Collection 1: /sales/{saleId}
@@ -335,9 +374,16 @@ service cloud.firestore {
           'subtotal', 'taxRate', 'taxAmount', 'totalAmount',
           'cashAmount', 'bankTransferAmount', 'paymentMethod',
           'bankAccountId', 'isReconciledWithBank', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]);
       allow delete: if isSignedIn() && isValidId(saleId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 2: /purchases/{purchaseId}
@@ -358,11 +404,18 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly([
           'invoiceNumber', 'date', 'vendorName', 'vendorTin', 'itemName',
           'category', 'quantity', 'unitCost', 'subtotal', 'taxRate', 'taxAmount',
-          'totalAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
+          'totalAmount', 'cashAmount', 'bankAmount', 'deductibility', 'deductiblePercentage', 'paymentMethod',
           'bankAccountId', 'isReconciledWithBank', 'receiptImage', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]);
       allow delete: if isSignedIn() && isValidId(purchaseId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 3: /bankAccounts/{accountId}
@@ -383,9 +436,16 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'bankName', 'accountNumberMasked', 'type',
           'currentBalance', 'currency', 'color', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]);
       allow delete: if isSignedIn() && isValidId(accountId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 4: /bankTransactions/{txId}
@@ -406,13 +466,20 @@ service cloud.firestore {
         (incoming().createdAt == existing().createdAt || !('createdAt' in incoming().diff(existing()).affectedKeys())) &&
         incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'bankAccountId', 'date', 'description', 'type', 'amount',
+          'bankAccountId', 'date', 'description', 'reason', 'type', 'amount',
           'category', 'referenceId', 'isReconciled', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]) &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow delete: if isSignedIn() && isValidId(txId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 5: /dailyCloses/{closeId}
@@ -435,9 +502,16 @@ service cloud.firestore {
           'totalGrossSales', 'totalTaxCollected', 'cashPaidOutForPurchases',
           'actualCashCounted', 'cashVariance', 'bankDepositAmount',
           'closedBy', 'status', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]);
       allow delete: if isSignedIn() && isValidId(closeId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 6: /reconcilingItems/{itemId}
@@ -460,11 +534,18 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly([
           'bankAccountId', 'date', 'type', 'referenceNumber',
           'partyOrDescription', 'amount', 'isCleared', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]) &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow delete: if isSignedIn() && isValidId(itemId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 7: /brsStatements/{statementId}
@@ -490,11 +571,18 @@ service cloud.firestore {
           'outstandingChequesTotal', 'unrecordedCreditsTotal', 'bankChargesTotal',
           'adjustedBankBalance', 'adjustedBookBalance', 'variance',
           'status', 'preparedBy', 'certifiedAt', 'notes', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]) &&
         exists(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)) &&
         get(/databases/$(database)/documents/bankAccounts/$(incoming().bankAccountId)).data.ownerId == request.auth.uid;
       allow delete: if isSignedIn() && isValidId(statementId) && isDocOwner();
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // Collection 8: /settings/{userId}
@@ -514,10 +602,19 @@ service cloud.firestore {
         incoming().updatedAt != null &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'businessName', 'taxIdNumber', 'currency', 'currencySymbol',
-          'defaultSalesTaxRate', 'corporateTaxRate', 'fiscalYearStartMonth', 'updatedAt',
-          'versionTimestamp', 'lastModifiedByDeviceId'
+          'defaultSalesTaxRate', 'corporateTaxRate', 'fiscalYearStartMonth',
+          'googleSheetId', 'googleSheetUrl', 'googleSheetName',
+          'googleAppsScriptUrl', 'googleSyncMethod', 'autoSyncToGoogleSheets', 'lastGoogleSheetSyncAt',
+          'updatedAt', 'version', 'versionTimestamp', 'lastModifiedByDeviceId'
         ]);
       allow delete: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+
+      match /logs/{logId} {
+        allow get: if isSignedIn() && isValidId(logId) && resource.data.performedBy == request.auth.uid;
+        allow list: if isSignedIn() && resource.data.performedBy == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().performedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
   }
 }

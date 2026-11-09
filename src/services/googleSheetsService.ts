@@ -55,7 +55,7 @@ export interface GoogleSheetsImportData {
   sourceSpreadsheetId?: string;
   sourceSpreadsheetTitle?: string;
   source: 'appscript' | 'public_sheet';
-  readSource?: 'firestore_rest_api' | 'google_sheets_fallback' | 'public_sheet';
+  readSource?: 'google_sheets_appscript' | 'public_sheet';
   tabNames?: string[];
   tabSummaries?: SheetTabDetail[];
   isEmptySpreadsheet?: boolean;
@@ -721,116 +721,11 @@ function handleClearSheet(spreadsheetId) {
 }
 
 /**
- * READ HIERARCHY:
- * Primary Read: Firestore via HTTP REST API
- * Fallback Read: Google Sheet (if Firestore is offline or fails)
+ * Reads financial records directly from Google Sheet tabs:
+ * Sales Register, Purchase Invoices, Bank Accounts & Txns, Daily Cash Reconciliation, Overview & Tax Summary
  */
 function handleRead(spreadsheetId) {
-  var firestoreProjectId = "gen-lang-client-0788885307";
-  var firestoreDatabaseId = "ai-studio-taxguardsalespur-0ddd81be-9988-4a23-b218-5cfb5bc29c03";
-  var firestoreApiKey = "AIzaSyCVBBsy5LUNtVB70yodu3bV3kL1zNHNuJ8";
-
-  // 1. Primary Read: Cloud Firestore via HTTP REST API
-  try {
-    var firestoreData = fetchFromFirestoreRest(firestoreProjectId, firestoreDatabaseId, firestoreApiKey);
-    if (firestoreData && (
-      firestoreData.sales.length > 0 ||
-      firestoreData.purchases.length > 0 ||
-      firestoreData.bankAccounts.length > 0 ||
-      firestoreData.dailyCloses.length > 0
-    )) {
-      return ContentService.createTextOutput(JSON.stringify({
-        status: 'success',
-        source: 'firestore_rest_api',
-        readAt: new Date().toISOString(),
-        sales: firestoreData.sales,
-        purchases: firestoreData.purchases,
-        bankAccounts: firestoreData.bankAccounts,
-        bankTransactions: firestoreData.bankTransactions,
-        dailyCloses: firestoreData.dailyCloses,
-        settings: firestoreData.settings || {}
-      })).setMimeType(ContentService.MimeType.JSON);
-    }
-  } catch (fsErr) {
-    console.warn("Primary Read from Firestore REST API failed: " + fsErr);
-  }
-
-  // 2. Fallback Read: Bound Google Sheet tabs
   return handleReadFromSheets(spreadsheetId);
-}
-
-function fetchFromFirestoreRest(projectId, databaseId, apiKey) {
-  var baseUrl = 'https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(projectId) + '/databases/' + encodeURIComponent(databaseId) + '/documents';
-  var keyParam = apiKey ? ('?key=' + encodeURIComponent(apiKey)) : '';
-
-  var result = {
-    sales: [],
-    purchases: [],
-    bankAccounts: [],
-    bankTransactions: [],
-    dailyCloses: [],
-    settings: null
-  };
-
-  var collections = ['sales', 'purchases', 'bankAccounts', 'bankTransactions', 'dailyCloses', 'settings'];
-  for (var i = 0; i < collections.length; i++) {
-    var col = collections[i];
-    try {
-      var url = baseUrl + '/' + col + keyParam;
-      var response = UrlFetchApp.fetch(url, {
-        method: 'get',
-        muteHttpExceptions: true
-      });
-      if (response.getResponseCode() === 200) {
-        var json = JSON.parse(response.getContentText());
-        var docs = json.documents || [];
-        var items = docs.map(function(doc) {
-          var data = parseFirestoreFields(doc.fields || {});
-          if (!data.id && doc.name) {
-            var parts = doc.name.split('/');
-            data.id = parts[parts.length - 1];
-          }
-          return data;
-        });
-        if (col === 'settings' && items.length > 0) {
-          result.settings = items[0];
-        } else {
-          result[col] = items;
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading ' + col + ' from Firestore REST: ' + e);
-    }
-  }
-
-  return result;
-}
-
-function parseFirestoreFields(fields) {
-  var obj = {};
-  for (var key in fields) {
-    var val = fields[key];
-    if (val.stringValue !== undefined) obj[key] = val.stringValue;
-    else if (val.doubleValue !== undefined) obj[key] = Number(val.doubleValue);
-    else if (val.integerValue !== undefined) obj[key] = Number(val.integerValue);
-    else if (val.booleanValue !== undefined) obj[key] = Boolean(val.booleanValue);
-    else if (val.timestampValue !== undefined) obj[key] = val.timestampValue;
-    else if (val.nullValue !== undefined) obj[key] = null;
-    else if (val.arrayValue !== undefined) {
-      var arr = (val.arrayValue && val.arrayValue.values) || [];
-      obj[key] = arr.map(function(item) {
-        if (item.mapValue) return parseFirestoreFields(item.mapValue.fields || {});
-        if (item.stringValue !== undefined) return item.stringValue;
-        if (item.doubleValue !== undefined) return Number(item.doubleValue);
-        if (item.integerValue !== undefined) return Number(item.integerValue);
-        if (item.booleanValue !== undefined) return Boolean(item.booleanValue);
-        return item;
-      });
-    } else if (val.mapValue !== undefined) {
-      obj[key] = parseFirestoreFields(val.mapValue.fields || {});
-    }
-  }
-  return obj;
 }
 
 function handleReadFromSheets(spreadsheetId) {
@@ -1674,43 +1569,6 @@ export async function fetchDataFromGoogleSheets(options: {
       if (res.ok) {
         const json = await res.json().catch(() => null);
         if (json && json.status === 'success') {
-          // Primary Read: Firestore via HTTP REST API from Apps Script
-          if (json.source === 'firestore_rest_api' && (json.sales || json.purchases || json.bankAccounts)) {
-            return {
-              settings: json.settings || {},
-              sales: (json.sales || []).map((s: any) => ({
-                ...s,
-                createdAt: s.createdAt || new Date().toISOString(),
-              })),
-              purchases: (json.purchases || []).map((p: any) => ({
-                ...p,
-                createdAt: p.createdAt || new Date().toISOString(),
-              })),
-              bankAccounts: json.bankAccounts || [],
-              bankTransactions: (json.bankTransactions || []).map((t: any) => ({
-                ...t,
-                createdAt: t.createdAt || new Date().toISOString(),
-              })),
-              dailyCloses: (json.dailyCloses || []).map((c: any) => ({
-                ...c,
-                createdAt: c.createdAt || new Date().toISOString(),
-              })),
-              rawStats: {
-                salesCount: (json.sales || []).length,
-                purchasesCount: (json.purchases || []).length,
-                bankAccountsCount: (json.bankAccounts || []).length,
-                bankTransactionsCount: (json.bankTransactions || []).length,
-                dailyClosesCount: (json.dailyCloses || []).length,
-              },
-              source: 'appscript',
-              readSource: 'firestore_rest_api',
-              spreadsheetTitle: detectedTitle,
-              spreadsheetId: detectedId,
-              spreadsheetUrl: detectedUrl,
-            };
-          }
-
-          // Fallback Read: Google Sheets tabs
           if (json.sheets && typeof json.sheets === 'object') {
             sheetsData = json.sheets;
             if (json.spreadsheetTitle) detectedTitle = json.spreadsheetTitle;
@@ -1733,41 +1591,6 @@ export async function fetchDataFromGoogleSheets(options: {
         if (postRes.ok) {
           const json = await postRes.json().catch(() => null);
           if (json && json.status === 'success') {
-            if (json.source === 'firestore_rest_api' && (json.sales || json.purchases || json.bankAccounts)) {
-              return {
-                settings: json.settings || {},
-                sales: (json.sales || []).map((s: any) => ({
-                  ...s,
-                  createdAt: s.createdAt || new Date().toISOString(),
-                })),
-                purchases: (json.purchases || []).map((p: any) => ({
-                  ...p,
-                  createdAt: p.createdAt || new Date().toISOString(),
-                })),
-                bankAccounts: json.bankAccounts || [],
-                bankTransactions: (json.bankTransactions || []).map((t: any) => ({
-                  ...t,
-                  createdAt: t.createdAt || new Date().toISOString(),
-                })),
-                dailyCloses: (json.dailyCloses || []).map((c: any) => ({
-                  ...c,
-                  createdAt: c.createdAt || new Date().toISOString(),
-                })),
-                rawStats: {
-                  salesCount: (json.sales || []).length,
-                  purchasesCount: (json.purchases || []).length,
-                  bankAccountsCount: (json.bankAccounts || []).length,
-                  bankTransactionsCount: (json.bankTransactions || []).length,
-                  dailyClosesCount: (json.dailyCloses || []).length,
-                },
-                source: 'appscript',
-                readSource: 'firestore_rest_api',
-                spreadsheetTitle: detectedTitle,
-                spreadsheetId: detectedId,
-                spreadsheetUrl: detectedUrl,
-              };
-            }
-
             if (json.sheets && typeof json.sheets === 'object') {
               sheetsData = json.sheets;
               if (json.spreadsheetTitle) detectedTitle = json.spreadsheetTitle;
@@ -1830,8 +1653,7 @@ export async function fetchDataFromGoogleSheets(options: {
   parsed.spreadsheetUrl = detectedUrl;
   parsed.sourceSpreadsheetId = detectedId;
   parsed.sourceSpreadsheetTitle = detectedTitle;
-  parsed.source = sourceMethod;
-  parsed.readSource = sourceMethod === 'public_sheet' ? 'public_sheet' : 'google_sheets_fallback';
+  parsed.readSource = sourceMethod === 'public_sheet' ? 'public_sheet' : 'google_sheets_appscript';
   return parsed;
 }
 

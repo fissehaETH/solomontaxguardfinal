@@ -23,17 +23,18 @@ import {
   downloadLocalDataBackup,
   importLocalDataBackup,
 } from '../../utils/storage';
-import { syncPendingToFirestore, queueAllLocalDataForSync } from '../../utils/syncEngine';
+import { syncLocalDataToGoogleSheets } from '../../utils/syncEngine';
+import { TaxSettings } from '../../types';
 
 interface LocalStorageSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   uid?: string | null;
   userEmail?: string | null;
+  settings?: TaxSettings;
   onDataRestored?: () => void;
   onPullFromCloud?: () => Promise<void> | void;
-  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
-    firestoreSuccess: boolean;
+  onClearCloudDatabases?: () => Promise<{
     sheetsSuccess: boolean;
     message: string;
   }>;
@@ -44,6 +45,7 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
   onClose,
   uid,
   userEmail,
+  settings,
   onDataRestored,
   onPullFromCloud,
   onClearCloudDatabases,
@@ -51,7 +53,6 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
   const [stats, setStats] = useState<LocalStorageStats | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [clearTarget, setClearTarget] = useState<'both' | 'firestore' | 'sheets'>('both');
   const [syncFeedback, setSyncFeedback] = useState<{
     type: 'success' | 'warning' | 'error' | 'info';
     message: string;
@@ -71,10 +72,10 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
   if (!isOpen) return null;
 
   const handleManualSync = async () => {
-    if (!uid) {
+    if (!settings || !settings.googleAppsScriptUrl) {
       setSyncFeedback({
         type: 'warning',
-        message: 'Please sign in to sync with the online database. Your data is currently safe in phone storage.',
+        message: 'Google Apps Script Web App URL is not configured. Set it in Settings to enable cloud sync.',
       });
       return;
     }
@@ -83,13 +84,20 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
     setSyncFeedback(null);
 
     try {
-      await syncPendingToFirestore(uid);
+      const res = await syncLocalDataToGoogleSheets(settings, uid || 'local');
       refreshStats();
 
-      setSyncFeedback({
-        type: 'success',
-        message: 'All financial records are securely synchronized and backed up!',
-      });
+      if (res.success) {
+        setSyncFeedback({
+          type: 'success',
+          message: `Synced with Google Sheets (${res.recordsCount.sales} sales, ${res.recordsCount.purchases} purchases, ${res.recordsCount.bankAccounts} bank accounts, ${res.recordsCount.bankTransactions} txs)!`,
+        });
+      } else {
+        setSyncFeedback({
+          type: 'warning',
+          message: res.error || 'Failed to sync with Google Sheets. Local data remains safe.',
+        });
+      }
     } catch {
       setSyncFeedback({
         type: 'info',
@@ -98,16 +106,6 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
     } finally {
       setIsSyncing(false);
     }
-  };
-
-  const handleQueueAll = () => {
-    if (!uid) return;
-    const count = queueAllLocalDataForSync(uid);
-    refreshStats();
-    setSyncFeedback({
-      type: 'info',
-      message: `Queued ${count} local record(s) for synchronization to online database.`,
-    });
   };
 
   const handleExportBackup = () => {
@@ -134,9 +132,7 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
           type: 'success',
           message: res.message,
         });
-        if (onDataRestored) {
-          onDataRestored();
-        }
+        if (onDataRestored) onDataRestored();
       } else {
         setSyncFeedback({
           type: 'error',
@@ -149,229 +145,158 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white dark:bg-stone-900 rounded-2xl shadow-2xl max-w-lg w-full max-h-[92vh] flex flex-col border border-stone-200 dark:border-stone-800 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        {/* Modal Header */}
-        <div className="px-5 py-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between bg-stone-50 dark:bg-stone-950 shrink-0">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+      <div className="bg-white dark:bg-stone-900 rounded-2xl w-full max-w-lg shadow-2xl border border-stone-200 dark:border-stone-800 overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="p-4 bg-linear-to-r from-amber-700 to-amber-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-orange-100 dark:bg-orange-950/70 border border-orange-300 dark:border-orange-800 flex items-center justify-center text-orange-700 dark:text-orange-400">
-              <Smartphone className="w-5 h-5" />
+            <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs">
+              <HardDrive className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-stone-900 dark:text-white">
-                Phone Storage & Online Sync
-              </h2>
-              <p className="text-xs text-stone-500 dark:text-stone-400">
-                የስልክ ውስጣዊ ማከማቻ እና የዳታ ማመሳሰያ
+              <h3 className="font-bold text-base leading-tight">Data Storage &amp; Sync</h3>
+              <p className="text-xs text-amber-200/90 font-medium">
+                LocalStorage (Primary) + Google Sheets via Apps Script
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition"
+            className="p-1.5 text-white/80 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-5 overflow-y-auto space-y-5 text-xs text-stone-600 dark:text-stone-300">
-          {/* Status Alert Banner */}
-          {stats?.isQuotaExceeded ? (
-            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-semibold text-amber-900 dark:text-amber-200">
-                  Online Database Quota Limit Exceeded
-                </p>
-                <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
-                  Firestore free daily read units have reached their limit for today. Solomon
-                  TaxGuard is currently using your phone’s local storage. All your tax settings,
-                  sales, and purchases remain fully preserved and operational on this device.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-semibold text-emerald-900 dark:text-emerald-200">
-                  Phone Local Storage is Active & Protected
-                </p>
-                <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
-                  Every transaction and parameter is continuously mirrored to your device’s local
-                  storage so you can work seamlessly offline without risking data loss.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Sync Feedback Message */}
+        {/* Content */}
+        <div className="p-5 overflow-y-auto space-y-5">
+          {/* Feedback alert */}
           {syncFeedback && (
             <div
-              className={`p-3 rounded-xl border flex items-start gap-2.5 text-xs ${
+              className={`p-3.5 rounded-xl text-xs flex items-start gap-2.5 ${
                 syncFeedback.type === 'success'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                  : syncFeedback.type === 'warning'
-                  ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                   : syncFeedback.type === 'error'
-                  ? 'bg-red-50 dark:bg-red-950/50 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
-                  : 'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200'
+                  ? 'bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-800'
+                  : syncFeedback.type === 'warning'
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                  : 'bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
               }`}
             >
-              <Info className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{syncFeedback.message}</span>
+              {syncFeedback.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />}
+              {syncFeedback.type === 'error' && <AlertOctagon className="w-4 h-4 shrink-0 mt-0.5" />}
+              {syncFeedback.type === 'warning' && <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+              {syncFeedback.type === 'info' && <Info className="w-4 h-4 shrink-0 mt-0.5" />}
+              <div className="flex-1 font-medium">{syncFeedback.message}</div>
             </div>
           )}
 
-          {/* Device Storage Statistics Card */}
-          <div className="rounded-xl border border-stone-200 dark:border-stone-800 p-4 bg-stone-50/50 dark:bg-stone-950/50 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-stone-900 dark:text-white flex items-center gap-1.5">
-                <HardDrive className="w-4 h-4 text-orange-700 dark:text-orange-400" />
-                Data Stored in Phone Memory
-              </span>
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 font-mono">
-                ~{stats?.estimatedSizeKb || 0} KB
-              </span>
+          {/* Architecture Card */}
+          <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-400">
+              <Layers className="w-4 h-4 text-amber-700" />
+              <span>Two-Tier Storage Architecture</span>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 text-stone-700 dark:text-stone-300 pt-1">
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Daily Sales</span>
-                <span className="font-bold text-orange-700 dark:text-orange-400">
-                  {stats?.salesCount || 0}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Purchases & Expenses</span>
-                <span className="font-bold text-orange-700 dark:text-orange-400">
-                  {stats?.purchasesCount || 0}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Bank Accounts</span>
-                <span className="font-bold text-stone-900 dark:text-white">
-                  {stats?.bankAccountsCount || 0}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Bank Transactions</span>
-                <span className="font-bold text-stone-900 dark:text-white">
-                  {stats?.bankTransactionsCount || 0}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Daily Register Closes</span>
-                <span className="font-bold text-stone-900 dark:text-white">
-                  {stats?.dailyClosesCount || 0}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 flex justify-between items-center">
-                <span>Tax Parameters</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  {stats?.hasSettings ? 'Configured' : 'Default'}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-stone-200 dark:border-stone-800 text-[11px] text-stone-500">
-              <span>Pending Cloud Sync:</span>
-              <span
-                className={`font-bold px-2 py-0.5 rounded-md ${
-                  (stats?.pendingSyncCount || 0) > 0
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                }`}
-              >
-                {(stats?.pendingSyncCount || 0) > 0
-                  ? `${stats?.pendingSyncCount} changes waiting`
-                  : 'All synced'}
-              </span>
-            </div>
+            <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
+              1. <strong>Primary Database</strong>: Browser LocalStorage for instant 0ms offline mutations.<br />
+              2. <strong>Cloud Database &amp; Backup</strong>: Google Sheets spreadsheet tabs via Google Apps Script Web App.
+            </p>
           </div>
 
-          {/* Cloud Synchronization Actions */}
-          <div className="space-y-2.5">
-            <span className="font-bold text-stone-900 dark:text-white block">
-              Online Database Actions
-            </span>
+          {/* Stats breakdown */}
+          {stats && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+                <span>Local Device Storage Stats</span>
+                <span className="text-amber-700 dark:text-amber-400 font-mono">
+                  {stats.formattedSize} ({stats.storageUsagePercent}% of quota)
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 text-center">
+                  <div className="text-lg font-black text-stone-800 dark:text-stone-100 font-mono">
+                    {stats.salesCount}
+                  </div>
+                  <div className="text-[11px] font-medium text-stone-500 dark:text-stone-400">Sales Records</div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 text-center">
+                  <div className="text-lg font-black text-stone-800 dark:text-stone-100 font-mono">
+                    {stats.purchasesCount}
+                  </div>
+                  <div className="text-[11px] font-medium text-stone-500 dark:text-stone-400">Purchases</div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 text-center">
+                  <div className="text-lg font-black text-stone-800 dark:text-stone-100 font-mono">
+                    {stats.bankAccountsCount}
+                  </div>
+                  <div className="text-[11px] font-medium text-stone-500 dark:text-stone-400">Bank Accounts</div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 text-center">
+                  <div className="text-lg font-black text-stone-800 dark:text-stone-100 font-mono">
+                    {stats.bankTransactionsCount}
+                  </div>
+                  <div className="text-[11px] font-medium text-stone-500 dark:text-stone-400">Bank Txns</div>
+                </div>
+              </div>
+            </div>
+          )}
 
-            <div className="flex flex-col sm:flex-row gap-2">
+          {/* Sync actions */}
+          <div className="space-y-2.5">
+            <div className="text-xs font-bold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+              Cloud Synchronization
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={handleManualSync}
                 disabled={isSyncing}
-                className="flex-1 py-2.5 px-4 rounded-xl bg-orange-700 hover:bg-orange-800 text-white font-semibold text-xs flex items-center justify-center gap-2 transition disabled:opacity-60 cursor-pointer shadow-xs"
+                className="p-3 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-xs cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{isSyncing ? 'Synchronizing...' : 'Sync Pending to Cloud'}</span>
+                <span>Sync with Google Sheets</span>
               </button>
 
               {onPullFromCloud && (
                 <button
+                  type="button"
                   onClick={async () => {
                     setIsSyncing(true);
-                    setSyncFeedback(null);
                     try {
                       await onPullFromCloud();
                       refreshStats();
-                      setSyncFeedback({
-                        type: 'success',
-                        message: 'Populated local storage with online database records!',
-                      });
-                    } catch (err) {
-                      setSyncFeedback({
-                        type: 'error',
-                        message: err instanceof Error ? err.message : 'Pull failed.',
-                      });
                     } finally {
                       setIsSyncing(false);
                     }
                   }}
                   disabled={isSyncing}
-                  className="py-2.5 px-3 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-800 dark:text-stone-200 font-medium text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  title="Populate phone local storage with data from online database"
+                  className="p-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  <Download className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
-                  <span>Pull from Database</span>
+                  <Download className="w-4 h-4" />
+                  <span>Pull from Google Sheets</span>
                 </button>
               )}
-
-              <button
-                onClick={handleQueueAll}
-                disabled={isSyncing}
-                className="py-2.5 px-3 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-800 dark:text-stone-200 font-medium text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
-                title="Mark all current phone records to push to online Firestore"
-              >
-                <Layers className="w-3.5 h-3.5 text-stone-500" />
-                <span>Queue All Data</span>
-              </button>
             </div>
           </div>
 
-          {/* Offline Backup & Restore Section */}
-          <div className="p-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/50 space-y-3">
-            <span className="font-bold text-stone-900 dark:text-white flex items-center gap-1.5">
-              <Download className="w-4 h-4 text-orange-700 dark:text-orange-400" />
-              Phone Backup & File Transfer
-            </span>
-            <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed">
-              Download your entire business ledger as a JSON file to your phone. You can keep it as
-              an offline backup or restore it on another phone anytime.
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+          {/* Local Backup / Restore Section */}
+          <div className="space-y-2.5">
+            <div className="text-xs font-bold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+              Offline File Backup (.json)
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={handleExportBackup}
-                className="flex-1 py-2 px-3 rounded-xl bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-800 dark:text-white font-medium text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                className="p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-800 text-stone-800 dark:text-stone-200 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5 text-orange-700 dark:text-orange-400" />
-                <span>Download Phone Backup (.json)</span>
+                <Download className="w-4 h-4 text-amber-700" />
+                <span>Download .JSON</span>
               </button>
 
-              <label className="flex-1 py-2 px-3 rounded-xl bg-white dark:bg-stone-800 border border-stone-300 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-800 dark:text-white font-medium text-xs flex items-center justify-center gap-2 transition cursor-pointer">
-                <Upload className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Restore Backup File</span>
+              <label className="p-2.5 rounded-xl border border-stone-300 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-800 text-stone-800 dark:text-stone-200 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer">
+                <Upload className="w-4 h-4 text-emerald-700" />
+                <span>Restore .JSON</span>
                 <input
                   type="file"
                   accept=".json,application/json"
@@ -382,17 +307,17 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
             </div>
           </div>
 
-          {/* Clear Secondary & Tertiary Database Section */}
+          {/* Clear Cloud Database Section */}
           {onClearCloudDatabases && (
             <div className="p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/40 dark:bg-red-950/20 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="font-bold text-red-900 dark:text-red-400 text-xs flex items-center gap-1.5">
                     <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-                    <span>Clear 2ndary &amp; 3rd Database</span>
+                    <span>Clear Google Sheets Cloud Backup</span>
                   </span>
                   <span className="text-[11px] text-stone-500 dark:text-stone-400 block pt-0.5">
-                    Wipe remote records from Firestore (2ndary) and/or Google Sheets (3rd). Phone LocalStorage stays safe.
+                    Wipes remote records from Google Sheets spreadsheet tabs. Phone LocalStorage stays safe.
                   </span>
                 </div>
                 <button
@@ -400,51 +325,15 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
                   onClick={() => setShowClearConfirm(!showClearConfirm)}
                   className="py-1.5 px-3 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 font-bold text-xs hover:bg-red-200 dark:hover:bg-red-800/60 transition cursor-pointer shrink-0"
                 >
-                  Clear Remote
+                  Clear Sheet
                 </button>
               </div>
 
               {showClearConfirm && (
                 <div className="p-3 rounded-xl bg-white dark:bg-stone-900 border border-red-200 dark:border-red-800 space-y-2.5 text-xs animate-fade-in">
-                  <div className="text-[11px] font-semibold text-stone-700 dark:text-stone-300">
-                    Select target cloud database to wipe:
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setClearTarget('both')}
-                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
-                        clearTarget === 'both'
-                          ? 'bg-red-700 text-white border-red-800'
-                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
-                      }`}
-                    >
-                      Both (2nd + 3rd)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setClearTarget('firestore')}
-                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
-                        clearTarget === 'firestore'
-                          ? 'bg-red-700 text-white border-red-800'
-                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
-                      }`}
-                    >
-                      Firestore Only
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setClearTarget('sheets')}
-                      className={`p-2 rounded-lg text-center font-bold text-[11px] border transition cursor-pointer ${
-                        clearTarget === 'sheets'
-                          ? 'bg-red-700 text-white border-red-800'
-                          : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-700'
-                      }`}
-                    >
-                      Sheets Only
-                    </button>
-                  </div>
-
+                  <p className="text-[11px] text-red-800 dark:text-red-300">
+                    Are you sure you want to clear all data tabs in Google Sheets? Local phone storage will remain intact.
+                  </p>
                   <div className="flex justify-end gap-2 pt-1">
                     <button
                       type="button"
@@ -460,9 +349,9 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
                       onClick={async () => {
                         setIsSyncing(true);
                         try {
-                          const res = await onClearCloudDatabases(clearTarget);
+                          const res = await onClearCloudDatabases();
                           setSyncFeedback({
-                            type: res.firestoreSuccess && res.sheetsSuccess ? 'success' : 'warning',
+                            type: res.sheetsSuccess ? 'success' : 'warning',
                             message: res.message,
                           });
                           setShowClearConfirm(false);
@@ -476,9 +365,9 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
                           setIsSyncing(false);
                         }
                       }}
-                      className="px-3.5 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                      className="px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold transition cursor-pointer shadow-xs"
                     >
-                      Confirm Remote Wipe
+                      {isSyncing ? 'Wiping...' : 'Confirm Wipe Google Sheets'}
                     </button>
                   </div>
                 </div>
@@ -487,14 +376,12 @@ export const LocalStorageSyncModal: React.FC<LocalStorageSyncModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer */}
-        <div className="px-5 py-3 border-t border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950 flex items-center justify-between text-xs shrink-0">
-          <span className="text-[11px] text-stone-400 truncate max-w-[200px]">
-            User: {userEmail || 'Local Phone User'}
-          </span>
+        {/* Footer */}
+        <div className="p-3.5 bg-stone-50 dark:bg-stone-800/50 border-t border-stone-200 dark:border-stone-800 flex justify-end">
           <button
+            type="button"
             onClick={onClose}
-            className="py-1.5 px-4 rounded-lg bg-stone-900 hover:bg-stone-800 text-white font-medium text-xs transition cursor-pointer"
+            className="px-4 py-2 rounded-xl bg-stone-200 dark:bg-stone-700 hover:bg-stone-300 dark:hover:bg-stone-600 font-bold text-xs text-stone-800 dark:text-stone-200 transition cursor-pointer"
           >
             Close
           </button>

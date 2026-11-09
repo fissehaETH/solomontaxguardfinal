@@ -60,7 +60,7 @@ const STORAGE_KEYS = {
   BRS_STATEMENTS: 'taxguard_brs_statements_solomon_v4_clean',
   SYNC_QUEUE: 'taxguard_offline_sync_queue',
   LAST_SYNC: 'taxguard_last_synced_timestamp',
-  QUOTA_FLAG: 'taxguard_firestore_quota_exceeded',
+  QUOTA_FLAG: 'taxguard_cloud_sync_pending',
   SAVED_APPS_SCRIPT_URL: 'taxguard_persistent_google_apps_script_url',
   SAVED_GOOGLE_SHEET_ID: 'taxguard_persistent_google_sheet_id',
   SAVED_GOOGLE_SHEET_URL: 'taxguard_persistent_google_sheet_url',

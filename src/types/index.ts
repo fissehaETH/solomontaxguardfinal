@@ -42,6 +42,7 @@ export interface SaleTransaction {
   notes?: string;
   createdAt: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -71,6 +72,7 @@ export interface PurchaseItem {
   notes?: string;
   createdAt: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -86,6 +88,7 @@ export interface BankAccount {
   color: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -115,6 +118,7 @@ export interface BankTransaction {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -137,6 +141,7 @@ export interface DailyRegisterClose {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -158,6 +163,7 @@ export interface TaxSettings {
   autoSyncToGoogleSheets?: boolean; // When true, automatically syncs changes to Google Sheets in the background
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
 }
@@ -192,6 +198,9 @@ export interface ReconcilingItem {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
+  versionTimestamp?: number;
+  lastModifiedByDeviceId?: string;
 }
 
 export interface BankReconciliationStatement {
@@ -216,8 +225,21 @@ export interface BankReconciliationStatement {
   notes?: string;
   createdAt?: number | string;
   updatedAt?: number | string;
+  version?: number;
   versionTimestamp?: number;
   lastModifiedByDeviceId?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: 'create' | 'update' | 'delete' | 'reconcile' | 'adjust' | 'transfer' | string;
+  entityType: string;
+  entityId: string;
+  performedBy: string;
+  version: number;
+  timestamp: string;
+  details?: string | Record<string, unknown>;
+  createdAt: string | number;
 }
 
 export type SyncStatusCode = 'SYNC_SUCCESS' | 'REJECTED_STALE_DATA' | 'OFFLINE_QUEUED';

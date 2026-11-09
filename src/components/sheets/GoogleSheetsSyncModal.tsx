@@ -52,8 +52,7 @@ interface GoogleSheetsSyncModalProps {
   bankTransactions: BankTransaction[];
   dailyCloses: DailyRegisterClose[];
   dailyCashAudit: DailyCashAuditSummary;
-  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
-    firestoreSuccess: boolean;
+  onClearCloudDatabases?: () => Promise<{
     sheetsSuccess: boolean;
     message: string;
   }>;
@@ -445,13 +444,13 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                 <button
                   type="button"
                   onClick={async () => {
-                    if (!window.confirm('Are you sure you want to clear all backup tabs in your Google Sheet? LocalStorage and Firestore will remain safe.')) {
+                    if (!window.confirm('Are you sure you want to clear all backup tabs in your Google Sheet? LocalStorage data will remain safe.')) {
                       return;
                     }
                     setIsSyncing(true);
                     setSyncError(null);
                     try {
-                      const res = await onClearCloudDatabases('sheets');
+                      const res = await onClearCloudDatabases();
                       if (res.sheetsSuccess) {
                         setSyncResult({
                           success: true,

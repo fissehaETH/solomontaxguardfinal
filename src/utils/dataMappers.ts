@@ -81,6 +81,15 @@ export const FirestoreMappers = {
       updatedAt,
     };
 
+    if (typeof sale.version === 'number') {
+      doc.version = sale.version;
+    }
+    if (typeof sale.versionTimestamp === 'number') {
+      doc.versionTimestamp = sale.versionTimestamp;
+    }
+    if (sale.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = sale.lastModifiedByDeviceId.slice(0, 128);
+    }
     if (sale.bankAccountId) {
       doc.bankAccountId = sanitizeId(sale.bankAccountId);
     }
@@ -110,6 +119,8 @@ export const FirestoreMappers = {
       taxRate: Number(purchase.taxRate) || 0,
       taxAmount: Number(purchase.taxAmount) || 0,
       totalAmount: Number(purchase.totalAmount) || 0,
+      cashAmount: Number(purchase.cashAmount) || 0,
+      bankAmount: Number(purchase.bankAmount) || 0,
       deductibility: purchase.deductibility || 'fully_deductible',
       deductiblePercentage: Number(purchase.deductiblePercentage) || 100,
       paymentMethod: purchase.paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'cash',
@@ -118,6 +129,15 @@ export const FirestoreMappers = {
       updatedAt,
     };
 
+    if (typeof purchase.version === 'number') {
+      doc.version = purchase.version;
+    }
+    if (typeof purchase.versionTimestamp === 'number') {
+      doc.versionTimestamp = purchase.versionTimestamp;
+    }
+    if (purchase.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = purchase.lastModifiedByDeviceId.slice(0, 128);
+    }
     if (purchase.vendorTin) {
       doc.vendorTin = purchase.vendorTin.slice(0, 100);
     }
@@ -139,7 +159,7 @@ export const FirestoreMappers = {
     const createdAt = ensureIsoTimestamp(account.createdAt);
     const updatedAt = ensureIsoTimestamp(account.updatedAt || account.createdAt);
 
-    return {
+    const doc: Record<string, unknown> = {
       id: accountId,
       ownerId,
       name: (account.name || 'Main Account').slice(0, 150),
@@ -152,6 +172,18 @@ export const FirestoreMappers = {
       createdAt,
       updatedAt,
     };
+
+    if (typeof account.version === 'number') {
+      doc.version = account.version;
+    }
+    if (typeof account.versionTimestamp === 'number') {
+      doc.versionTimestamp = account.versionTimestamp;
+    }
+    if (account.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = account.lastModifiedByDeviceId.slice(0, 128);
+    }
+
+    return doc;
   },
 
   bankTxToFirestore(tx: BankTransaction, ownerId: string): Record<string, unknown> {
@@ -173,8 +205,20 @@ export const FirestoreMappers = {
       updatedAt,
     };
 
+    if (typeof tx.version === 'number') {
+      doc.version = tx.version;
+    }
+    if (typeof tx.versionTimestamp === 'number') {
+      doc.versionTimestamp = tx.versionTimestamp;
+    }
+    if (tx.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = tx.lastModifiedByDeviceId.slice(0, 128);
+    }
     if (tx.referenceId) {
       doc.referenceId = sanitizeId(tx.referenceId);
+    }
+    if (tx.reason) {
+      doc.reason = tx.reason.slice(0, 500);
     }
     if (tx.notes || tx.reason) {
       doc.notes = (tx.notes || tx.reason || '').slice(0, 1000);
@@ -188,7 +232,7 @@ export const FirestoreMappers = {
     const createdAt = ensureIsoTimestamp(close.createdAt);
     const updatedAt = ensureIsoTimestamp(close.updatedAt || close.createdAt);
 
-    return {
+    const doc: Record<string, unknown> = {
       id: closeId,
       ownerId,
       date: (close.date || new Date().toISOString().split('T')[0]).slice(0, 30),
@@ -208,6 +252,18 @@ export const FirestoreMappers = {
       createdAt,
       updatedAt,
     };
+
+    if (typeof close.version === 'number') {
+      doc.version = close.version;
+    }
+    if (typeof close.versionTimestamp === 'number') {
+      doc.versionTimestamp = close.versionTimestamp;
+    }
+    if (close.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = close.lastModifiedByDeviceId.slice(0, 128);
+    }
+
+    return doc;
   },
 
   reconcilingItemToFirestore(item: ReconcilingItem, ownerId: string): Record<string, unknown> {
@@ -215,7 +271,7 @@ export const FirestoreMappers = {
     const createdAt = ensureIsoTimestamp(item.createdAt);
     const updatedAt = ensureIsoTimestamp(item.updatedAt || item.createdAt);
 
-    return {
+    const doc: Record<string, unknown> = {
       id: itemId,
       ownerId,
       bankAccountId: sanitizeId(item.bankAccountId),
@@ -229,6 +285,18 @@ export const FirestoreMappers = {
       createdAt,
       updatedAt,
     };
+
+    if (typeof item.version === 'number') {
+      doc.version = item.version;
+    }
+    if (typeof item.versionTimestamp === 'number') {
+      doc.versionTimestamp = item.versionTimestamp;
+    }
+    if (item.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = item.lastModifiedByDeviceId.slice(0, 128);
+    }
+
+    return doc;
   },
 
   brsStatementToFirestore(stmt: BankReconciliationStatement, ownerId: string): Record<string, unknown> {
@@ -236,7 +304,7 @@ export const FirestoreMappers = {
     const createdAt = ensureIsoTimestamp(stmt.createdAt);
     const updatedAt = ensureIsoTimestamp(stmt.updatedAt || stmt.createdAt);
 
-    return {
+    const doc: Record<string, unknown> = {
       id: stmtId,
       ownerId,
       statementNumber: (stmt.statementNumber || 'BRS-1').slice(0, 100),
@@ -260,13 +328,25 @@ export const FirestoreMappers = {
       createdAt,
       updatedAt,
     };
+
+    if (typeof stmt.version === 'number') {
+      doc.version = stmt.version;
+    }
+    if (typeof stmt.versionTimestamp === 'number') {
+      doc.versionTimestamp = stmt.versionTimestamp;
+    }
+    if (stmt.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = stmt.lastModifiedByDeviceId.slice(0, 128);
+    }
+
+    return doc;
   },
 
   settingsToFirestore(settings: TaxSettings, ownerId: string): Record<string, unknown> {
     const createdAt = ensureIsoTimestamp(settings.createdAt);
     const updatedAt = ensureIsoTimestamp(settings.updatedAt || settings.createdAt);
 
-    return {
+    const doc: Record<string, unknown> = {
       ownerId,
       businessName: (settings.businessName || 'Business Shop').slice(0, 200),
       taxIdNumber: (settings.taxIdNumber || '').slice(0, 100),
@@ -278,6 +358,25 @@ export const FirestoreMappers = {
       createdAt,
       updatedAt,
     };
+
+    if (typeof settings.version === 'number') {
+      doc.version = settings.version;
+    }
+    if (typeof settings.versionTimestamp === 'number') {
+      doc.versionTimestamp = settings.versionTimestamp;
+    }
+    if (settings.lastModifiedByDeviceId) {
+      doc.lastModifiedByDeviceId = settings.lastModifiedByDeviceId.slice(0, 128);
+    }
+    if (settings.googleSheetId) doc.googleSheetId = settings.googleSheetId.slice(0, 200);
+    if (settings.googleSheetUrl) doc.googleSheetUrl = settings.googleSheetUrl.slice(0, 500);
+    if (settings.googleSheetName) doc.googleSheetName = settings.googleSheetName.slice(0, 200);
+    if (settings.googleAppsScriptUrl) doc.googleAppsScriptUrl = settings.googleAppsScriptUrl.slice(0, 500);
+    if (settings.googleSyncMethod) doc.googleSyncMethod = settings.googleSyncMethod;
+    if (typeof settings.autoSyncToGoogleSheets === 'boolean') doc.autoSyncToGoogleSheets = settings.autoSyncToGoogleSheets;
+    if (settings.lastGoogleSheetSyncAt) doc.lastGoogleSheetSyncAt = settings.lastGoogleSheetSyncAt;
+
+    return doc;
   },
 };
 

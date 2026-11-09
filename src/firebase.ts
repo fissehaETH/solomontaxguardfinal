@@ -24,6 +24,12 @@ import {
   where,
   getDocs,
   getDoc,
+  runTransaction,
+  increment,
+  arrayUnion,
+  arrayRemove,
+  onSnapshot,
+  addDoc,
   Timestamp,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -143,6 +149,12 @@ export {
   where,
   getDocs,
   getDoc,
+  runTransaction,
+  increment,
+  arrayUnion,
+  arrayRemove,
+  onSnapshot,
+  addDoc,
   Timestamp,
 };
 export type { User };

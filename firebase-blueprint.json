@@ -61,6 +61,8 @@
         "taxRate": { "type": "number" },
         "taxAmount": { "type": "number" },
         "totalAmount": { "type": "number" },
+        "cashAmount": { "type": "number" },
+        "bankAmount": { "type": "number" },
         "deductibility": { "type": "string", "enum": ["fully_deductible", "partially_deductible", "non_deductible"] },
         "deductiblePercentage": { "type": "number" },
         "paymentMethod": { "type": "string", "enum": ["cash", "bank_transfer"] },
@@ -134,6 +136,7 @@
         "bankAccountId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "date": { "type": "string", "maxLength": 30 },
         "description": { "type": "string", "maxLength": 500 },
+        "reason": { "type": "string", "maxLength": 500 },
         "type": { "type": "string", "enum": ["credit", "debit"] },
         "amount": { "type": "number" },
         "category": { "type": "string", "maxLength": 60 },
@@ -308,6 +311,13 @@
         "defaultSalesTaxRate": { "type": "number" },
         "corporateTaxRate": { "type": "number" },
         "fiscalYearStartMonth": { "type": "number" },
+        "googleSheetId": { "type": "string", "maxLength": 128 },
+        "googleSheetUrl": { "type": "string", "maxLength": 500 },
+        "googleSheetName": { "type": "string", "maxLength": 200 },
+        "googleAppsScriptUrl": { "type": "string", "maxLength": 500 },
+        "googleSyncMethod": { "type": "string", "maxLength": 50 },
+        "autoSyncToGoogleSheets": { "type": "boolean" },
+        "lastGoogleSheetSyncAt": { "type": "string", "maxLength": 50 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -323,6 +333,32 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable audit log event recorded in document sub-collections.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "action": { "type": "string", "maxLength": 100 },
+        "entityType": { "type": "string", "maxLength": 100 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "version": { "type": "number" },
+        "timestamp": { "type": "string", "maxLength": 50 },
+        "details": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "action",
+        "entityType",
+        "entityId",
+        "performedBy",
+        "version",
+        "timestamp",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -330,21 +366,41 @@
       "schema": "SaleTransaction",
       "description": "Total daily sales records owned by the user."
     },
+    "/sales/{saleId}/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail log sub-collection for sales mutations."
+    },
     "/purchases/{purchaseId}": {
       "schema": "PurchaseItem",
       "description": "Purchase and expense records owned by the user."
+    },
+    "/purchases/{purchaseId}/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail log sub-collection for purchase mutations."
     },
     "/bankAccounts/{accountId}": {
       "schema": "BankAccount",
       "description": "Bank accounts owned by the user."
     },
+    "/bankAccounts/{accountId}/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail log sub-collection for bank account mutations."
+    },
     "/bankTransactions/{txId}": {
       "schema": "BankTransaction",
       "description": "Bank statement transactions owned by the user."
     },
+    "/bankTransactions/{txId}/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail log sub-collection for bank transaction mutations."
+    },
     "/dailyCloses/{closeId}": {
       "schema": "DailyRegisterClose",
       "description": "Daily Z-report close records owned by the user."
+    },
+    "/dailyCloses/{closeId}/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail log sub-collection for daily close mutations."
     },
     "/reconcilingItems/{itemId}": {
       "schema": "ReconcilingItem",

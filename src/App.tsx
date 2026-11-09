@@ -1,27 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
 import {
-  auth,
-  db,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-  collection,
-  query,
-  where,
-  getDocs,
-  getDoc,
-  signInWithGoogle,
-  firebaseSignOut,
-  onAuthStateChanged,
-  handleFirestoreError,
-  OperationType,
-  User,
-} from './firebase';
-import { ensureIsoTimestamp } from './utils/dataMappers';
-import {
   BankAccount,
   BankReconciliationStatement,
   BankTransaction,
@@ -55,9 +34,8 @@ import {
   hydratePurchasesImages,
 } from './utils/storage';
 import {
-  syncPendingToFirestore,
-  performFirstTimeCloudSync,
-  hasDoneInitialCloudSync,
+  pullFromGoogleSheetsToLocalStorage,
+  syncLocalDataToGoogleSheets,
   applyRemoteRecordToLocalStorage,
 } from './utils/syncEngine';
 import {
@@ -88,73 +66,36 @@ function sanitizeId(raw: string): string {
 const clientTimestamp = () => new Date().toISOString();
 
 export default function App() {
-  // Firebase Authentication State & Local Fallback
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(() => auth.currentUser);
-  const [isSigningInWithGoogle, setIsSigningInWithGoogle] = useState(false);
+  // Local Authentication State (LocalStorage-based)
+  const [authUsername, setAuthUsername] = useState(() => {
+    try {
+      return localStorage.getItem('taxguard_username') || 'solomon';
+    } catch {
+      return 'solomon';
+    }
+  });
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    if (auth.currentUser) return true;
     try {
       return localStorage.getItem('taxguard_logged_in') === 'true';
     } catch {
-      return false;
+      return true;
     }
   });
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  // Synchronize Firebase Auth state listener
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (usr) => {
-      setFirebaseUser(usr);
-      if (usr) {
-        setIsLoggedIn(true);
-        try {
-          localStorage.setItem('taxguard_logged_in', 'true');
-          localStorage.setItem('taxguard_username', usr.email || usr.uid);
-        } catch {}
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const authUsername = firebaseUser?.uid || localStorage.getItem('taxguard_username') || 'solomon';
-  const user = firebaseUser
-    ? { uid: firebaseUser.uid, email: firebaseUser.email, displayName: firebaseUser.displayName || firebaseUser.email }
-    : { uid: authUsername, email: `${authUsername}@local`, displayName: authUsername };
+  const user = { uid: authUsername, email: `${authUsername}@local`, displayName: authUsername };
   const [hasSettingsDoc, setHasSettingsDoc] = useState(true);
 
-  const handleGoogleSignIn = async () => {
-    setLoginError(null);
-    setIsSigningInWithGoogle(true);
+  const handleQuickDemoSignIn = () => {
+    setIsLoggedIn(true);
+    setAuthUsername('solomon');
     try {
-      const usr = await signInWithGoogle();
-      if (usr) {
-        setIsLoggedIn(true);
-        setFirebaseUser(usr);
-        try {
-          localStorage.setItem('taxguard_logged_in', 'true');
-          localStorage.setItem('taxguard_username', usr.email || usr.uid);
-        } catch {}
-        showToast(`Signed in with Google as ${usr.displayName || usr.email}!`);
-        // Hydrate from Firestore
-        performFirstTimeCloudSync(usr.uid, (data) => {
-          if (data.sales && data.sales.length > 0) setSales(data.sales);
-          if (data.purchases && data.purchases.length > 0) setPurchases(data.purchases);
-          if (data.bankAccounts && data.bankAccounts.length > 0) setBankAccounts(data.bankAccounts);
-          if (data.bankTransactions && data.bankTransactions.length > 0) setBankTransactions(data.bankTransactions);
-          if (data.dailyCloses && data.dailyCloses.length > 0) setDailyCloses(data.dailyCloses);
-          if (data.reconcilingItems && data.reconcilingItems.length > 0) setReconcilingItems(data.reconcilingItems);
-          if (data.brsStatements && data.brsStatements.length > 0) setBrsStatements(data.brsStatements);
-          if (data.settings) setSettings(data.settings);
-        });
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setLoginError(msg || 'Google sign-in was blocked or failed.');
-    } finally {
-      setIsSigningInWithGoogle(false);
-    }
+      localStorage.setItem('taxguard_logged_in', 'true');
+      localStorage.setItem('taxguard_username', 'solomon');
+    } catch {}
+    showToast('Signed in as Solomon (Shop Owner)!');
   };
 
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -165,8 +106,10 @@ export default function App() {
 
     if (usernameInput.trim().toLowerCase() === validUser.toLowerCase() && passwordInput === validPass) {
       setIsLoggedIn(true);
+      setAuthUsername(validUser);
       try {
         localStorage.setItem('taxguard_logged_in', 'true');
+        localStorage.setItem('taxguard_username', validUser);
       } catch {}
       showToast(`Welcome back, ${validUser}!`);
     } else {
@@ -175,11 +118,7 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    try {
-      await firebaseSignOut(auth);
-    } catch {}
     setIsLoggedIn(false);
-    setFirebaseUser(null);
     try {
       localStorage.setItem('taxguard_logged_in', 'false');
     } catch {}
@@ -275,87 +214,33 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Strict Read Path: Client App <-> LocalStorage (Local UI state) OR Firebase Firestore (Cloud primary)
-  // Google Sheets is strictly an isolated passive backup destination and MUST NEVER be read into LocalStorage.
-  const syncFromFirestorePrimary = async (uid: string, notifyUser = false) => {
-    if (!navigator.onLine || !uid) return;
+  // Pull from Database: Reads directly from Google Sheets via Apps Script and updates LocalStorage with full parity
+  const syncFromGoogleSheets = async (notifyUser = false) => {
+    if (!navigator.onLine) {
+      if (notifyUser) showToast('Device is offline. Operating strictly from LocalStorage.');
+      return;
+    }
+    const cleanUrl = settings.googleAppsScriptUrl?.trim() || settings.googleSheetUrl?.trim();
+    if (!cleanUrl) {
+      if (notifyUser) showToast('Please enter your Google Apps Script URL in Settings to pull data.');
+      return;
+    }
     try {
-      const [salesSnap, purchasesSnap, accountsSnap, txsSnap, closesSnap, settingsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'sales'), where('ownerId', '==', uid))),
-        getDocs(query(collection(db, 'purchases'), where('ownerId', '==', uid))),
-        getDocs(query(collection(db, 'bankAccounts'), where('ownerId', '==', uid))),
-        getDocs(query(collection(db, 'bankTransactions'), where('ownerId', '==', uid))),
-        getDocs(query(collection(db, 'dailyCloses'), where('ownerId', '==', uid))),
-        getDoc(doc(db, 'settings', uid)),
-      ]);
-
-      const cloudSales: SaleTransaction[] = salesSnap.docs.map((d) => d.data() as SaleTransaction);
-      const cloudPurchases: PurchaseItem[] = purchasesSnap.docs.map((d) => d.data() as PurchaseItem);
-      const cloudAccounts: BankAccount[] = accountsSnap.docs.map((d) => d.data() as BankAccount);
-      const cloudTxs: BankTransaction[] = txsSnap.docs.map((d) => d.data() as BankTransaction);
-      const cloudCloses: DailyRegisterClose[] = closesSnap.docs.map((d) => d.data() as DailyRegisterClose);
-      const cloudSettings = settingsSnap.exists() ? (settingsSnap.data() as TaxSettings) : null;
-
-      const hasCloudData =
-        cloudSales.length > 0 || cloudPurchases.length > 0 || cloudAccounts.length > 0 || cloudCloses.length > 0;
-
-      if (hasCloudData) {
-        const local = loadUserLocalData(uid);
-        const localIsEmpty = local.sales.length === 0 && local.purchases.length === 0;
-        const cloudHasMore =
-          cloudSales.length > local.sales.length || cloudPurchases.length > local.purchases.length;
-
-        if (localIsEmpty || cloudHasMore || notifyUser) {
-          if (cloudSales.length > 0) {
-            setSales(cloudSales);
-            saveUserLocalCollection('sales', cloudSales, uid);
-          }
-          if (cloudPurchases.length > 0) {
-            setPurchases(cloudPurchases);
-            saveUserLocalCollection('purchases', cloudPurchases, uid);
-          }
-          if (cloudAccounts.length > 0) {
-            setBankAccounts(cloudAccounts);
-            saveUserLocalCollection('bankAccounts', cloudAccounts, uid);
-          }
-          if (cloudTxs.length > 0) {
-            setBankTransactions(cloudTxs);
-            saveUserLocalCollection('bankTransactions', cloudTxs, uid);
-          }
-          if (cloudCloses.length > 0) {
-            setDailyCloses(cloudCloses);
-            saveUserLocalCollection('dailyCloses', cloudCloses, uid);
-          }
-          if (cloudSettings) {
-            const merged = { ...local.settings, ...cloudSettings };
-            setSettings(merged);
-            saveUserLocalSettings(merged, uid);
-          }
-          if (notifyUser) {
-            showToast(
-              `Hydrated local storage from Firebase Firestore (Cloud Primary: ${cloudSales.length} sales, ${cloudPurchases.length} purchases).`
-            );
-          }
-        }
-      } else if (notifyUser) {
-        showToast('Local ledger is already up to date with Firebase Firestore.');
-      }
+      if (notifyUser) showToast('Pulling data from Google Sheets via Apps Script...');
+      const res = await pullFromGoogleSheetsToLocalStorage(settings, authUsername, (data) => {
+        if (data.sales && data.sales.length > 0) setSales(data.sales);
+        if (data.purchases && data.purchases.length > 0) setPurchases(data.purchases);
+        if (data.bankAccounts && data.bankAccounts.length > 0) setBankAccounts(data.bankAccounts);
+        if (data.bankTransactions && data.bankTransactions.length > 0) setBankTransactions(data.bankTransactions);
+        if (data.dailyCloses && data.dailyCloses.length > 0) setDailyCloses(data.dailyCloses);
+        if (data.settings && Object.keys(data.settings).length > 0) setSettings((prev) => ({ ...prev, ...data.settings }));
+      });
+      showToast(res.message);
     } catch (err) {
-      console.warn('Firestore primary read failed or offline:', err);
-      if (notifyUser) {
-        showToast('Could not reach Firebase Firestore. Local storage remains active.');
-      }
+      const msg = err instanceof Error ? err.message : String(err);
+      if (notifyUser) showToast(`Pull failed: ${msg}`);
     }
   };
-
-  // Initial login & sync: pull latest data from Firebase Firestore (Cloud Primary)
-  useEffect(() => {
-    if (!isLoggedIn || !navigator.onLine) return;
-    const targetUid = user?.uid || auth.currentUser?.uid;
-    if (targetUid) {
-      syncFromFirestorePrimary(targetUid, false);
-    }
-  }, [isLoggedIn, user]);
 
   // Quiet background auto-sync to Google Sheets via Apps Script Web App when financial data changes
   useEffect(() => {
@@ -517,15 +402,9 @@ export default function App() {
     return () => window.removeEventListener('online', handleReconnected);
   }, [sales, purchases, bankAccounts, bankTransactions, dailyCloses, settings, authUsername]);
 
-  // On-demand refresh: pulls latest data strictly from Firebase Firestore (Cloud Primary) into local storage
+  // On-demand refresh: pulls latest data from Google Sheets via Apps Script into LocalStorage
   const handleRefreshFromCloud = async () => {
-    const targetUid = user?.uid || auth.currentUser?.uid;
-    if (!targetUid) {
-      showToast('Please sign in to pull from the Firebase Firestore cloud database.');
-      return;
-    }
-    showToast('Querying Firebase Firestore (Cloud Primary)...');
-    await syncFromFirestorePrimary(targetUid, true);
+    await syncFromGoogleSheets(true);
   };
 
   // Tri-tier Tertiary Database Sync: Google Sheets
@@ -590,21 +469,19 @@ export default function App() {
         setAutoSyncStatus('error');
       }
     } catch (err) {
-      console.warn('Tertiary Google Sheet sync warning:', err);
+      console.warn('Google Sheet sync warning:', err);
       setAutoSyncStatus('error');
     } finally {
       isAutoSyncingRef.current = false;
     }
   };
 
-  // Online Firestore database write with Last-Write-Wins Conflict Resolution:
-  // - If incoming device payload is older than database record: REJECT update completely (REJECTED_STALE_DATA),
-  //   fetch latest version from Firestore, and overwrite LocalStorage and UI state (Sync Down).
-  // - If incoming device payload is newer: ACCEPT and commit to Firestore (SYNC_SUCCESS), then trigger tertiary backup.
+  // Data mutations persist immediately in LocalStorage (Primary Database).
+  // Then asynchronously back up to Google Sheets via Apps Script Web App.
   const safeWrite = async (
-    action?: () => Promise<void>,
-    op?: OperationType,
-    path?: string,
+    _action?: () => Promise<void>,
+    _op?: any,
+    _path?: string,
     syncMutationId?: string,
     uid?: string | null,
     overridesForTertiary?: {
@@ -614,82 +491,18 @@ export default function App() {
       bankTransactions?: BankTransaction[];
       dailyCloses?: DailyRegisterClose[];
     },
-    incomingData?: Record<string, any>
+    _incomingData?: Record<string, any>
   ): Promise<boolean> => {
-    const activeUid = uid || user?.uid || auth.currentUser?.uid || 'guest';
-    if (action && auth.currentUser) {
-      try {
-        // Pre-check Firestore record for multi-device conflict resolution if path and incomingData are provided
-        if (incomingData && path && (op === OperationType.CREATE || op === OperationType.UPDATE || op === OperationType.WRITE)) {
-          try {
-            const parts = path.split('/');
-            if (parts.length === 2) {
-              const [colName, docKey] = parts;
-              const targetDocRef = doc(db, colName, docKey);
-              const existingSnap = await getDoc(targetDocRef);
-              if (existingSnap.exists()) {
-                const existingData = existingSnap.data() as any;
-                const conflict = resolveLastWriteWins(incomingData, existingData);
-                if (conflict.code === 'REJECTED_STALE_DATA') {
-                  console.warn(`[safeWrite] REJECTED_STALE_DATA on ${path}:`, conflict.message);
-                  // Sync Down: Overwrite LocalStorage with the remote database state
-                  applyRemoteRecordToLocalStorage(colName, existingData, activeUid);
-                  // Sync Down: Immediately update local React state to reflect database reality
-                  if (colName === 'sales') {
-                    setSales((prev) => prev.map((s) => (s.id === docKey ? (existingData as SaleTransaction) : s)));
-                  } else if (colName === 'purchases') {
-                    setPurchases((prev) => prev.map((p) => (p.id === docKey ? (existingData as PurchaseItem) : p)));
-                  } else if (colName === 'bankAccounts') {
-                    setBankAccounts((prev) => prev.map((a) => (a.id === docKey ? (existingData as BankAccount) : a)));
-                  } else if (colName === 'bankTransactions') {
-                    setBankTransactions((prev) => prev.map((t) => (t.id === docKey ? (existingData as BankTransaction) : t)));
-                  } else if (colName === 'dailyCloses') {
-                    setDailyCloses((prev) => prev.map((c) => (c.id === docKey ? (existingData as DailyRegisterClose) : c)));
-                  } else if (colName === 'settings') {
-                    setSettings((prev) => ({ ...prev, ...existingData }));
-                  }
-                  if (syncMutationId) {
-                    removeSyncMutation(syncMutationId, activeUid);
-                  }
-                  setPendingSyncCount(getPendingSyncMutations(activeUid).length);
-                  showToast('Conflict: Stale local change rejected. Synced latest version from cloud.');
-                  return false;
-                }
-              }
-            }
-          } catch (conflictCheckErr) {
-            console.warn('Conflict pre-check warning (proceeding with write):', conflictCheckErr);
-          }
-        }
-
-        await action();
-        if (syncMutationId) {
-          removeSyncMutation(syncMutationId, uid);
-        }
-        setPendingSyncCount(getPendingSyncMutations(uid).length);
-        setIsQuotaExceeded(false);
-        setQuotaExceededFlag(false);
-
-        // Passive Secondary Cloud Backup: Triggered ONLY after successful Firestore mutation commit
-        syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
-          console.warn('Asynchronous Firestore-to-Google-Sheets backup warning:', err);
-        });
-        return true;
-      } catch (err: unknown) {
-        console.warn(`Firestore ${op || 'write'} warning on ${path || 'unknown'}:`, err);
-        try {
-          handleFirestoreError(err, op || OperationType.WRITE, path || null);
-        } catch (e) {
-          console.error('Handled Firestore safeWrite error:', e);
-        }
-        return false;
-      }
-    } else if (syncMutationId) {
-      removeSyncMutation(syncMutationId, uid);
-      setPendingSyncCount(getPendingSyncMutations(uid).length);
-      return true;
+    const activeUid = uid || authUsername || 'solomon';
+    if (syncMutationId) {
+      removeSyncMutation(syncMutationId, activeUid);
+      setPendingSyncCount(getPendingSyncMutations(activeUid).length);
     }
-    return false;
+    // Asynchronously back up to Google Sheets
+    syncToTertiaryGoogleSheet(overridesForTertiary).catch((err) => {
+      console.warn('Google Sheets background sync warning:', err);
+    });
+    return true;
   };
 
   // Firestore & Phone Local Storage Action Handlers
@@ -853,8 +666,13 @@ export default function App() {
         if (transferAmount > 0 && newSale.bankAccountId) {
           const targetAcc = bankAccounts.find((a) => a.id === newSale.bankAccountId);
           if (targetAcc) {
+            await setDoc(
+              doc(db, 'bankAccounts', targetAcc.id),
+              FirestoreMappers.bankAccountToFirestore(targetAcc, user!.uid),
+              { merge: true }
+            );
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-              currentBalance: targetAcc.currentBalance + transferAmount,
+              currentBalance: increment(transferAmount),
               updatedAt: clientTimestamp(),
               versionTimestamp: Date.now(),
               lastModifiedByDeviceId: getDeviceId(),
@@ -1058,7 +876,7 @@ export default function App() {
           const oldAcc = bankAccounts.find((a) => a.id === oldBankId);
           if (oldAcc && oldBankId !== newBankId) {
             await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
-              currentBalance: oldAcc.currentBalance - oldTransfer,
+              currentBalance: increment(-oldTransfer),
               updatedAt: clientTimestamp(),
             });
           }
@@ -1070,7 +888,7 @@ export default function App() {
               oldBankId === newBankId ? transferAmount - oldTransfer : transferAmount;
             if (delta !== 0) {
               await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-                currentBalance: targetAcc.currentBalance + delta,
+                currentBalance: increment(delta),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -1175,7 +993,7 @@ export default function App() {
             const acc = bankAccounts.find((a) => a.id === oldBankId);
             if (acc) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
-                currentBalance: acc.currentBalance - oldTransfer,
+                currentBalance: increment(-oldTransfer),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -1357,10 +1175,17 @@ export default function App() {
       async () => {
         await setDoc(doc(db, 'purchases', purchaseId), purchasePayload);
         if (bankAmount > 0 && targetBankAccountId) {
-          const targetAcc = bankAccounts.find((a) => a.id === targetBankAccountId);
+          const targetAcc =
+            bankAccounts.find((a) => a.id === targetBankAccountId) ||
+            currentBankAccounts.find((a) => a.id === targetBankAccountId);
           if (targetAcc) {
+            await setDoc(
+              doc(db, 'bankAccounts', targetAcc.id),
+              FirestoreMappers.bankAccountToFirestore(targetAcc, user!.uid),
+              { merge: true }
+            );
             await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-              currentBalance: targetAcc.currentBalance - bankAmount,
+              currentBalance: increment(-bankAmount),
               updatedAt: clientTimestamp(),
               versionTimestamp: Date.now(),
               lastModifiedByDeviceId: getDeviceId(),
@@ -1538,7 +1363,7 @@ export default function App() {
           const oldAcc = bankAccounts.find((a) => a.id === oldBankId);
           if (oldAcc) {
             await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
-              currentBalance: oldAcc.currentBalance + oldBankAmount,
+              currentBalance: increment(oldBankAmount),
               updatedAt: clientTimestamp(),
             });
           }
@@ -1546,10 +1371,15 @@ export default function App() {
         if (newBankId) {
           const targetAcc = bankAccounts.find((a) => a.id === newBankId);
           if (targetAcc) {
+            await setDoc(
+              doc(db, 'bankAccounts', targetAcc.id),
+              FirestoreMappers.bankAccountToFirestore(targetAcc, user!.uid),
+              { merge: true }
+            );
             const delta = oldBankId === newBankId ? newBankAmount - oldBankAmount : newBankAmount;
             if (delta !== 0) {
               await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-                currentBalance: targetAcc.currentBalance - delta,
+                currentBalance: increment(-delta),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -1647,7 +1477,7 @@ export default function App() {
             const acc = bankAccounts.find((a) => a.id === oldBankId);
             if (acc) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
-                currentBalance: acc.currentBalance + oldBankAmount,
+                currentBalance: increment(oldBankAmount),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -1805,10 +1635,15 @@ export default function App() {
           await setDoc(doc(db, 'dailyCloses', closeId), closePayload);
         }
         if (closeDeposit > 0 && primaryAcc) {
+          await setDoc(
+            doc(db, 'bankAccounts', primaryAcc.id),
+            FirestoreMappers.bankAccountToFirestore(primaryAcc, user!.uid),
+            { merge: true }
+          );
           const delta = closeDeposit - oldDeposit;
           if (delta !== 0) {
             await updateDoc(doc(db, 'bankAccounts', primaryAcc.id), {
-              currentBalance: primaryAcc.currentBalance + delta,
+              currentBalance: increment(delta),
               updatedAt: clientTimestamp(),
               versionTimestamp: Date.now(),
               lastModifiedByDeviceId: getDeviceId(),
@@ -1977,19 +1812,21 @@ export default function App() {
     // 4. Online Firestore write
     await safeWrite(
       async () => {
-        await setDoc(doc(db, 'bankTransactions', txId), payload);
         if (targetAcc) {
-          const nextBalance =
-            tx.type === 'credit'
-              ? targetAcc.currentBalance + tx.amount
-              : targetAcc.currentBalance - tx.amount;
+          await setDoc(
+            doc(db, 'bankAccounts', targetAcc.id),
+            FirestoreMappers.bankAccountToFirestore(targetAcc, user!.uid),
+            { merge: true }
+          );
+          const deltaAmount = tx.type === 'credit' ? tx.amount : -tx.amount;
           await updateDoc(doc(db, 'bankAccounts', targetAcc.id), {
-            currentBalance: nextBalance,
+            currentBalance: increment(deltaAmount),
             updatedAt: clientTimestamp(),
             versionTimestamp: Date.now(),
             lastModifiedByDeviceId: getDeviceId(),
           });
         }
+        await setDoc(doc(db, 'bankTransactions', txId), payload);
       },
       OperationType.CREATE,
       `bankTransactions/${txId}`,
@@ -2261,7 +2098,7 @@ export default function App() {
             const acc = bankAccounts.find((a) => a.id === newBankId);
             if (acc && diff !== 0) {
               await updateDoc(doc(db, 'bankAccounts', acc.id), {
-                currentBalance: acc.currentBalance + diff,
+                currentBalance: increment(diff),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -2270,13 +2107,13 @@ export default function App() {
             const newAcc = bankAccounts.find((a) => a.id === newBankId);
             if (oldAcc) {
               await updateDoc(doc(db, 'bankAccounts', oldAcc.id), {
-                currentBalance: oldAcc.currentBalance - oldSigned,
+                currentBalance: increment(-oldSigned),
                 updatedAt: clientTimestamp(),
               });
             }
             if (newAcc) {
               await updateDoc(doc(db, 'bankAccounts', newAcc.id), {
-                currentBalance: newAcc.currentBalance + newSigned,
+                currentBalance: increment(newSigned),
                 updatedAt: clientTimestamp(),
               });
             }
@@ -2328,7 +2165,7 @@ export default function App() {
           if (acc) {
             const signed = oldTx.type === 'credit' ? oldTx.amount : -oldTx.amount;
             await updateDoc(doc(db, 'bankAccounts', acc.id), {
-              currentBalance: acc.currentBalance - signed,
+              currentBalance: increment(-signed),
               updatedAt: clientTimestamp(),
             });
           }
@@ -2511,11 +2348,11 @@ export default function App() {
     await safeWrite(
       async () => {
         await updateDoc(doc(db, 'bankAccounts', fromAcc.id), {
-          currentBalance: fromAcc.currentBalance - amount,
+          currentBalance: increment(-amount),
           updatedAt: clientTimestamp(),
         });
         await updateDoc(doc(db, 'bankAccounts', toAcc.id), {
-          currentBalance: toAcc.currentBalance + amount,
+          currentBalance: increment(amount),
           updatedAt: clientTimestamp(),
         });
         await setDoc(doc(db, 'bankTransactions', debitId), {
@@ -3222,111 +3059,40 @@ export default function App() {
     setBrsStatements(reset.brsStatements);
     setSettings(reset.settings);
     setPendingSyncCount(getPendingSyncMutations(user?.uid).length);
-
-    if (user && !isQuotaExceeded && navigator.onLine) {
-      try {
-        for (const s of sales) await deleteDoc(doc(db, 'sales', s.id)).catch(() => {});
-        for (const p of purchases) await deleteDoc(doc(db, 'purchases', p.id)).catch(() => {});
-        for (const t of bankTransactions) await deleteDoc(doc(db, 'bankTransactions', t.id)).catch(() => {});
-        for (const c of dailyCloses) await deleteDoc(doc(db, 'dailyCloses', c.id)).catch(() => {});
-        for (const r of reconcilingItems) await deleteDoc(doc(db, 'reconcilingItems', r.id)).catch(() => {});
-        for (const b of brsStatements) await deleteDoc(doc(db, 'brsStatements', b.id)).catch(() => {});
-        for (const a of bankAccounts) await deleteDoc(doc(db, 'bankAccounts', a.id)).catch(() => {});
-      } catch (err) {
-        console.warn('Failed clearing online docs:', err);
-      }
-    }
     showToast('Financial ledger reset to initial clean state on phone.');
   };
 
   /**
-   * Clears everything in the 2ndary Database (Firebase Firestore)
-   * and the 3rd Database (Google Sheets Passive Backup)
+   * Clears everything in the Cloud Database (Google Sheets via Apps Script Web App)
    */
-  const handleClearCloudDatabases = async (target: 'both' | 'firestore' | 'sheets'): Promise<{
-    firestoreSuccess: boolean;
+  const handleClearCloudDatabases = async (): Promise<{
     sheetsSuccess: boolean;
     message: string;
   }> => {
-    let firestoreSuccess = true;
     let sheetsSuccess = true;
-    const details: string[] = [];
+    let message = '';
 
-    // 1. Clear 2ndary Database: Firebase Firestore
-    if (target === 'both' || target === 'firestore') {
-      const activeUid = user?.uid || auth.currentUser?.uid;
-      if (!activeUid) {
-        firestoreSuccess = false;
-        details.push('Firestore: Not signed in or user ID unavailable.');
-      } else if (!navigator.onLine) {
-        firestoreSuccess = false;
-        details.push('Firestore: Device is currently offline.');
-      } else {
-        try {
-          const collectionsToClear = [
-            'sales',
-            'purchases',
-            'bankTransactions',
-            'dailyCloses',
-            'reconcilingItems',
-            'brsStatements',
-            'bankAccounts',
-          ];
-
-          let deletedDocsCount = 0;
-          for (const colName of collectionsToClear) {
-            try {
-              const q = query(collection(db, colName), where('ownerId', '==', activeUid));
-              const snap = await getDocs(q);
-              if (!snap.empty) {
-                const CHUNK = 400;
-                for (let i = 0; i < snap.docs.length; i += CHUNK) {
-                  const chunk = snap.docs.slice(i, i + CHUNK);
-                  const batch = writeBatch(db);
-                  chunk.forEach((d) => batch.delete(d.ref));
-                  await batch.commit();
-                  deletedDocsCount += chunk.length;
-                }
-              }
-            } catch (colErr) {
-              console.warn(`Error clearing Firestore collection ${colName}:`, colErr);
-            }
-          }
-
-          details.push(`Firestore: Cleared ${deletedDocsCount} documents across all cloud collections.`);
-        } catch (fsErr) {
-          firestoreSuccess = false;
-          details.push(`Firestore error: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`);
-        }
+    const cleanUrl = settings.googleAppsScriptUrl?.trim() || settings.googleSheetUrl?.trim();
+    if (!cleanUrl) {
+      sheetsSuccess = false;
+      message = 'Google Sheets: No Apps Script Web App URL configured in Settings.';
+    } else if (!navigator.onLine) {
+      sheetsSuccess = false;
+      message = 'Google Sheets: Device is currently offline.';
+    } else {
+      try {
+        const res = await clearGoogleSheetsBackup(cleanUrl, settings.googleSheetId);
+        message = `Google Sheets: ${res.message}`;
+      } catch (sheetErr) {
+        sheetsSuccess = false;
+        message = `Google Sheets error: ${sheetErr instanceof Error ? sheetErr.message : String(sheetErr)}`;
       }
     }
 
-    // 2. Clear 3rd Database: Google Sheets (Spreadsheet via Apps Script Web App)
-    if (target === 'both' || target === 'sheets') {
-      const cleanUrl = settings.googleAppsScriptUrl?.trim();
-      if (!cleanUrl) {
-        sheetsSuccess = false;
-        details.push('Google Sheets: No Apps Script Web App URL configured in Settings.');
-      } else if (!navigator.onLine) {
-        sheetsSuccess = false;
-        details.push('Google Sheets: Device is currently offline.');
-      } else {
-        try {
-          const res = await clearGoogleSheetsBackup(cleanUrl, settings.googleSheetId);
-          details.push(`Google Sheets: ${res.message}`);
-        } catch (sheetErr) {
-          sheetsSuccess = false;
-          details.push(`Google Sheets error: ${sheetErr instanceof Error ? sheetErr.message : String(sheetErr)}`);
-        }
-      }
-    }
-
-    const summaryMsg = details.join(' | ');
-    showToast(summaryMsg);
+    showToast(message);
     return {
-      firestoreSuccess,
       sheetsSuccess,
-      message: summaryMsg,
+      message,
     };
   };
 
@@ -3461,7 +3227,7 @@ export default function App() {
               Solomon Building Materials Shop
             </h1>
             <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
-              Sign in with your Google account to synchronize your ledger with Cloud Firestore, or use local shop credentials.
+              Local device storage with automatic Google Sheets cloud backup via Apps Script Web App.
             </p>
           </div>
 
@@ -3471,39 +3237,21 @@ export default function App() {
             </div>
           )}
 
-          {/* Primary Action: Google Sign-In */}
+          {/* Quick Login Action */}
           <div className="space-y-3">
             <button
               type="button"
-              onClick={handleGoogleSignIn}
-              disabled={isSigningInWithGoogle}
-              className="w-full py-3 px-4 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 hover:bg-stone-50 dark:hover:bg-stone-750 text-stone-800 dark:text-stone-100 text-sm font-semibold transition-all flex items-center justify-center gap-3 cursor-pointer shadow-sm hover:shadow active:scale-[0.99] disabled:opacity-50"
+              onClick={handleQuickDemoSignIn}
+              className="w-full py-3 px-4 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-900 dark:text-orange-200 text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99]"
             >
-              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>{isSigningInWithGoogle ? 'Connecting to Google...' : 'Sign In with Google'}</span>
+              <ShieldCheck className="w-4 h-4 text-orange-700 dark:text-orange-400" />
+              <span>Enter as Solomon (Shop Owner)</span>
             </button>
 
             <div className="relative flex py-1 items-center">
               <div className="grow border-t border-stone-200 dark:border-stone-800"></div>
               <span className="shrink mx-3 text-[10px] font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
-                Or sign in with shop credentials
+                Or sign in with custom password
               </span>
               <div className="grow border-t border-stone-200 dark:border-stone-800"></div>
             </div>

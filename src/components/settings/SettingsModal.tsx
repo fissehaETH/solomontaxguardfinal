@@ -10,8 +10,7 @@ interface SettingsModalProps {
   settings: TaxSettings;
   onSaveSettings: (settings: TaxSettings) => void;
   onResetData: () => void;
-  onClearCloudDatabases?: (target: 'both' | 'firestore' | 'sheets') => Promise<{
-    firestoreSuccess: boolean;
+  onClearCloudDatabases?: () => Promise<{
     sheetsSuccess: boolean;
     message: string;
   }>;
@@ -36,7 +35,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [formData, setFormData] = useState<TaxSettings>({ ...settings });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [showConfirmCloudClear, setShowConfirmCloudClear] = useState(false);
-  const [cloudClearTarget, setCloudClearTarget] = useState<'both' | 'firestore' | 'sheets'>('both');
   const [isClearingCloud, setIsClearingCloud] = useState(false);
   const [cloudClearResult, setCloudClearResult] = useState<string | null>(null);
   const [isPullingCloud, setIsPullingCloud] = useState(false);
@@ -348,10 +346,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-semibold text-stone-800 block">
-                  Clear 2ndary &amp; 3rd Database
+                  Clear Cloud Database (Google Sheets)
                 </span>
                 <span className="text-[11px] text-stone-500">
-                  Wipe remote records from Firebase Firestore (2ndary) and Google Sheets (3rd) while keeping your phone's LocalStorage intact.
+                  Wipe remote records from your Google Sheets spreadsheet backup via Apps Script while keeping your device's LocalStorage intact.
                 </span>
               </div>
               <button
@@ -364,7 +362,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                <span>Clear Cloud Databases</span>
+                <span>Clear Cloud Database</span>
               </button>
             </div>
 
@@ -373,52 +371,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 space-y-3 animate-fade-in text-xs">
                 <div className="flex items-center gap-2 font-bold text-red-900">
                   <Database className="w-4 h-4 text-red-700" />
-                  <span>Choose database(s) to clear:</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCloudClearTarget('both')}
-                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
-                      cloudClearTarget === 'both'
-                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
-                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
-                    }`}
-                  >
-                    <span className="block font-bold text-xs">Both 2ndary &amp; 3rd</span>
-                    <span className="text-[10px] opacity-90 block">Firestore + Sheets</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setCloudClearTarget('firestore')}
-                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
-                      cloudClearTarget === 'firestore'
-                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
-                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
-                    }`}
-                  >
-                    <span className="block font-bold text-xs">2ndary Only</span>
-                    <span className="text-[10px] opacity-90 block">Firebase Firestore</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setCloudClearTarget('sheets')}
-                    className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
-                      cloudClearTarget === 'sheets'
-                        ? 'bg-red-700 text-white border-red-800 shadow-xs'
-                        : 'bg-white text-stone-800 border-stone-300 hover:bg-stone-50'
-                    }`}
-                  >
-                    <span className="block font-bold text-xs">3rd Only</span>
-                    <span className="text-[10px] opacity-90 block">Google Sheets</span>
-                  </button>
+                  <span>Confirm Remote Data Wipe:</span>
                 </div>
 
                 <p className="text-[11px] text-red-800 leading-relaxed">
-                  <strong>Warning:</strong> This permanently deletes all data from the selected cloud database(s). Your local phone storage (Primary Database) will not be affected.
+                  <strong>Warning:</strong> This permanently clears the backup tabs in your connected Google Sheet. Your local device storage (Primary Database) will not be affected.
                 </p>
 
                 {cloudClearResult && (
@@ -443,7 +400,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       if (!onClearCloudDatabases) return;
                       setIsClearingCloud(true);
                       try {
-                        const res = await onClearCloudDatabases(cloudClearTarget);
+                        const res = await onClearCloudDatabases();
                         setCloudClearResult(res.message);
                         setTimeout(() => {
                           setShowConfirmCloudClear(false);
@@ -457,7 +414,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="px-4 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>{isClearingCloud ? 'Clearing Remote Data...' : `Confirm Wipe (${cloudClearTarget.toUpperCase()})`}</span>
+                    <span>{isClearingCloud ? 'Clearing Remote Data...' : 'Confirm Wipe Google Sheet'}</span>
                   </button>
                 </div>
               </div>
@@ -471,7 +428,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Pull from Database
                   </span>
                   <span className="text-[11px] text-stone-500">
-                    Update all local phone records (sales, purchases, bank, reconciliation) with the latest data from Cloud Firestore.
+                    Update all local records (sales, purchases, bank, reconciliation) with the latest backup data from Google Sheets via Apps Script.
                   </span>
                 </div>
                 <button
@@ -481,7 +438,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     setPullResult(null);
                     try {
                       await onPullFromCloud();
-                      setPullResult('Local storage successfully updated from database!');
+                      setPullResult('Local storage successfully updated from Google Sheets!');
                       setTimeout(() => setPullResult(null), 3000);
                     } catch (err) {
                       setPullResult(err instanceof Error ? err.message : 'Pull failed.');
